@@ -35,7 +35,7 @@ jobs:
           restore-keys: |
             spotify-data-
       
-      - name: Sync Spotify data
+      - name: Sync Spotify data and update playlists
         env:
           # Required secrets
           SPOTIPY_CLIENT_ID: ${{ secrets.SPOTIPY_CLIENT_ID }}
@@ -46,7 +46,7 @@ jobs:
           PLAYLIST_OWNER_NAME: ${{ secrets.PLAYLIST_OWNER_NAME }}
           PLAYLIST_PREFIX: ${{ secrets.PLAYLIST_PREFIX }}
         run: |
-          python scripts/sync_and_update.py
+          python scripts/spotify_sync.py
       
       - name: Save cached data
         uses: actions/cache/save@v4

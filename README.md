@@ -154,8 +154,7 @@ spotim8/
 │   ├── src/
 │   └── package.json
 ├── scripts/
-│   ├── daily_update.py           # Local automation
-│   ├── sync_and_update.py        # GitHub Actions script
+│   ├── spotify_sync.py           # Unified sync & playlist update
 │   └── get_refresh_token.py      # Get token for CI/CD
 ├── .github/workflows/
 │   └── daily_update.yml          # GitHub Actions workflow
