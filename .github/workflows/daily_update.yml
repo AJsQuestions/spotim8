@@ -1,9 +1,9 @@
 name: Daily Spotify Playlist Update
 
 on:
-  # Run daily at 2am UTC
+  # Run daily at 6am PT (14:00 UTC)
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 14 * * *'
   
   # Allow manual trigger
   workflow_dispatch:
