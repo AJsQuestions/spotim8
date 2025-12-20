@@ -3,10 +3,12 @@
 Sync & Update Script for GitHub Actions
 
 This script:
-1. Syncs liked songs from Spotify API
-2. Updates all playlists (monthly, genre-split, master genre)
+1. Syncs full library (all playlists + liked songs) to parquet files
+2. Syncs liked songs from Spotify API
+3. Updates all playlists (monthly, genre-split, master genre)
 
 Uses refresh token for headless authentication in CI/CD.
+Parquet files are cached and updated incrementally.
 """
 
 import os
@@ -23,6 +25,13 @@ from spotipy.oauth2 import SpotifyOAuth
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Import spotim8 for full library sync
+try:
+    from spotim8 import Spotim8, CacheConfig, set_response_cache
+    SPOTIM8_AVAILABLE = True
+except ImportError:
+    SPOTIM8_AVAILABLE = False
 
 # ============================================================================
 # CONFIGURATION - Set via environment variables
@@ -401,6 +410,56 @@ def update_playlists(sp, liked_tracks, artists_df, track_artists_df):
             log(f"  {name}: created with {len(uris)} tracks")
 
 
+def sync_full_library():
+    """
+    Sync full library using spotim8 - updates all parquet files.
+    This is the main data sync that updates:
+    - playlists.parquet
+    - playlist_tracks.parquet  
+    - tracks.parquet
+    - track_artists.parquet
+    - artists.parquet
+    """
+    if not SPOTIM8_AVAILABLE:
+        log("⚠️  spotim8 not available, skipping full library sync")
+        return False
+    
+    log("\n--- Full Library Sync ---")
+    
+    try:
+        # Enable API response caching
+        api_cache_dir = DATA_DIR / ".api_cache"
+        set_response_cache(api_cache_dir, ttl=3600)
+        
+        # Initialize client
+        sf = Spotim8.from_env(
+            progress=True,
+            cache=CacheConfig(dir=DATA_DIR)
+        )
+        
+        # Sync library (incremental - only fetches changes)
+        stats = sf.sync(
+            owned_only=True,
+            include_liked_songs=True
+        )
+        
+        log(f"✅ Library sync complete: {stats}")
+        
+        # Force regenerate derived tables
+        _ = sf.tracks()
+        _ = sf.artists()
+        _ = sf.library_wide()
+        
+        log("✅ All parquet files updated")
+        return True
+        
+    except Exception as e:
+        log(f"⚠️  Full library sync failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     log("=" * 60)
     log("Spotify Playlist Sync & Update")
@@ -415,7 +474,10 @@ def main():
         sys.exit(1)
     
     try:
-        # 1. Sync liked songs
+        # 0. Full library sync (updates all parquet files)
+        sync_full_library()
+        
+        # 1. Sync liked songs (for playlist updates)
         liked_tracks = sync_liked_songs(sp)
         
         if not liked_tracks:
