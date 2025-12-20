@@ -4,6 +4,9 @@ Your **personal Spotify analytics platform** with **automated playlist managemen
 
 Turn your Spotify library into tidy DataFrames, analyze your listening habits, and automatically organize your music into smart playlists.
 
+[![Daily Playlist Update](https://github.com/yourusername/spotim8/actions/workflows/daily_update.yml/badge.svg)](https://github.com/yourusername/spotim8/actions/workflows/daily_update.yml)
+[![Deploy Web App](https://github.com/yourusername/spotim8/actions/workflows/deploy-web.yml/badge.svg)](https://github.com/yourusername/spotim8/actions/workflows/deploy-web.yml)
+
 ## ✨ Features
 
 - 📊 **Pandas DataFrames** - Your library as tidy, mergeable tables
@@ -29,6 +32,23 @@ pip install -e .
 export SPOTIPY_CLIENT_ID="your_client_id"
 export SPOTIPY_CLIENT_SECRET="your_client_secret"
 export SPOTIPY_REDIRECT_URI="http://127.0.0.1:8888/callback"
+```
+
+## 🔧 Python API
+
+```python
+from spotim8 import Spotim8, build_all_features
+
+sf = Spotim8.from_env(progress=True)
+
+# Sync your library
+sf.sync(owned_only=True, include_liked_songs=True)
+
+# Access your data
+playlists = sf.playlists()      # All playlists
+tracks = sf.tracks()            # All tracks
+artists = sf.artists()          # Artists with genres
+wide = sf.library_wide()        # Everything joined
 ```
 
 ## 📓 Notebooks
@@ -63,10 +83,11 @@ export PLAYLIST_PREFIX="Finds"     # Month playlist prefix
 
 ## 🤖 Daily Automation (GitHub Actions)
 
-Playlists update automatically every day at 2am UTC.
+Playlists update automatically every day at 6am PT (14:00 UTC).
 
 ### Setup:
-1. Fork this repo or push to your own GitHub
+
+1. Fork this repo
 2. Run `python scripts/get_refresh_token.py` locally to get your refresh token
 3. Add these **secrets** to your repo (Settings → Secrets → Actions):
 
@@ -80,6 +101,7 @@ Playlists update automatically every day at 2am UTC.
 | `PLAYLIST_PREFIX` | ❌ | Prefix like "Finds" (default: "Finds") |
 
 ### Manual trigger:
+
 Actions → Daily Spotify Playlist Update → Run workflow
 
 ## 🌐 Web App
@@ -93,28 +115,13 @@ npm run dev
 ```
 
 **Features:**
-- Privacy-first (all data processed in browser)
-- Interactive charts and visualizations
-- Playlist clusters and hidden gems
-- Genre breakdown and artist treemaps
-- Release timeline analysis
+- 🔒 Privacy-first (all data processed in browser)
+- 📊 Interactive charts and visualizations
+- 🎯 Playlist clusters and hidden gems
+- 🎸 Genre breakdown and artist treemaps
+- 📈 Release timeline analysis
 
-## 🔧 Python API
-
-```python
-from spotim8 import Spotim8, build_all_features
-
-sf = Spotim8.from_env(progress=True)
-
-# Sync your library
-sf.sync(owned_only=True, include_liked_songs=True)
-
-# Access your data
-playlists = sf.playlists()      # All playlists
-tracks = sf.tracks()            # All tracks
-artists = sf.artists()          # Artists with genres
-wide = sf.library_wide()        # Everything joined
-```
+See [spotim8_app/README.md](spotim8_app/README.md) for self-hosting instructions.
 
 ## 📁 Data Tables
 
@@ -144,22 +151,34 @@ spotim8 export --table tracks --out tracks.parquet
 
 ```
 spotim8/
+├── spotim8/                      # Core Python library
+│   ├── client.py                 # Main Spotim8 class
+│   ├── catalog.py                # Data caching layer
+│   ├── cli.py                    # Command line interface
+│   └── features.py               # Feature engineering
+├── spotim8_app/                  # React web app
+│   ├── src/
+│   │   ├── components/           # UI components
+│   │   ├── context/              # Spotify auth context
+│   │   ├── lib/                  # Analytics & API
+│   │   └── pages/                # Dashboard pages
+│   └── package.json
 ├── notebooks/
 │   ├── 01_sync_data.ipynb
 │   ├── 02_analyze_library.ipynb
 │   ├── 03_playlist_analysis.ipynb
 │   ├── 04_liked_songs_monthly_playlists.ipynb
 │   └── lib.py                    # Shared utilities
-├── spotim8_app/                  # React web app
-│   ├── src/
-│   └── package.json
 ├── scripts/
 │   ├── spotify_sync.py           # Unified sync & playlist update
-│   └── get_refresh_token.py      # Get token for CI/CD
+│   ├── get_refresh_token.py      # Get token for CI/CD
+│   └── export_for_web.py         # Export data for web app
 ├── .github/workflows/
-│   └── daily_update.yml          # GitHub Actions workflow
-├── spotim8/                      # Core Python library
-└── data/                         # Cached parquet files
+│   ├── daily_update.yml          # Daily playlist sync
+│   └── deploy-web.yml            # Web app deployment
+├── examples/
+│   └── 01_quickstart.py          # Quick start example
+└── data/                         # Cached parquet files (gitignored)
 ```
 
 ## 📋 Requirements
@@ -179,7 +198,7 @@ This library focuses on what's still available.
 
 ## 📄 License
 
-MIT
+MIT - See [LICENSE](LICENSE) for details.
 
 ---
 

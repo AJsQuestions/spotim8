@@ -1,6 +1,6 @@
 [project]
 name = "spotim8"
-version = "0.2.0"
+version = "1.0.0"
 description = "Pandas-first Spotify Web API interface: tidy DataFrames for library + market signals."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,4 +1,8 @@
-# Python
+# ============================================
+# Spotim8 - Git Ignore Configuration
+# ============================================
+
+# ----- Python -----
 __pycache__/
 *.py[cod]
 *$py.class
@@ -11,7 +15,6 @@ downloads/
 eggs/
 .eggs/
 lib/
-!spotim8_app/src/lib/
 lib64/
 parts/
 sdist/
@@ -21,59 +24,56 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
+# Exclude web app's lib/ from the Python ignore
+!spotim8_app/src/lib/
+
+# ----- Virtual Environments -----
 .env
 .venv
 env/
 venv/
 ENV/
 
-# Jupyter Notebook
-.ipynb_checkpoints/
-*.ipynb_checkpoints
-
-# IDE
+# ----- IDE / Editor -----
 .idea/
 .vscode/
 *.swp
 *.swo
-.DS_Store
+*.sublime-project
+*.sublime-workspace
 
-# Spotify credentials and cache
+# ----- macOS -----
+.DS_Store
+*.DS_Store
+Thumbs.db
+
+# ----- Jupyter Notebook -----
+.ipynb_checkpoints/
+
+# ----- Spotify Credentials & Cache -----
 .cache
 .cache-*
 *.cache
+notebooks/.cache
+data/.api_cache/
 
-# Data files (large, user-specific)
+# ----- Data Files (user-specific) -----
 data/*.parquet
+data/*.json
 data/streaming_history/*.json
 !data/streaming_history/README.md
 
-# Logs
+# ----- Web App -----
+spotim8_app/node_modules/
+spotim8_app/dist/
+spotim8_app/public/dev-data/
+spotim8_app/.env
+spotim8_app/.env.local
+
+# ----- Logs -----
 *.log
 
-# Environment variables
+# ----- Environment Variables -----
 .env
 .env.local
-
-# Spotify cache (contains tokens)
-.cache
-.cache-*
-notebooks/.cache
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# macOS
-.DS_Store
-*.DS_Store
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Local dev data (personal library export)
-spotim8_app/public/dev-data/
-# API response cache
-data/.api_cache/
+.env.*.local

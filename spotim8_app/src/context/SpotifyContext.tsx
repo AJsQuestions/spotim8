@@ -47,9 +47,9 @@ function saveToCache(data: Omit<CachedData, 'version' | 'timestamp'>): void {
       timestamp: Date.now(),
     }
     localStorage.setItem(CACHE_KEY, JSON.stringify(cached))
-    console.log('💾 Dev cache: Data saved to localStorage')
+    if (import.meta.env.DEV) console.log('💾 Dev cache: Data saved')
   } catch (err) {
-    console.warn('Failed to save cache:', err)
+    if (import.meta.env.DEV) console.warn('Cache save failed:', err)
   }
 }
 
@@ -60,22 +60,17 @@ function loadFromCache(): CachedData | null {
     if (!raw) return null
     const cached: CachedData = JSON.parse(raw)
     if (cached.version !== CACHE_VERSION) {
-      console.log('💾 Dev cache: Version mismatch, clearing cache')
       localStorage.removeItem(CACHE_KEY)
       return null
     }
-    const ageMinutes = (Date.now() - cached.timestamp) / 1000 / 60
-    console.log(`💾 Dev cache: Found cached data (${ageMinutes.toFixed(1)} min old)`)
     return cached
-  } catch (err) {
-    console.warn('Failed to load cache:', err)
+  } catch {
     return null
   }
 }
 
 function clearCache(): void {
   localStorage.removeItem(CACHE_KEY)
-  console.log('💾 Dev cache: Cleared')
 }
 
 // Local backend data - loads from parquet exports (dev mode only)
@@ -93,15 +88,9 @@ async function loadLocalBackendData(): Promise<LocalLibraryData | null> {
   
   try {
     const response = await fetch('/spotim8/dev-data/library.json')
-    if (!response.ok) {
-      console.log('📁 No local backend data found (run: python scripts/export_for_web.py)')
-      return null
-    }
-    const data: LocalLibraryData = await response.json()
-    console.log(`📁 Loaded local backend data (exported: ${data.exportedAt})`)
-    return data
-  } catch (err) {
-    console.log('📁 No local backend data available')
+    if (!response.ok) return null
+    return await response.json()
+  } catch {
     return null
   }
 }
@@ -190,10 +179,9 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         try {
           const userData = await spotify.getCurrentUser()
           setUser(userData)
-        } catch (error) {
-          console.error('Failed to fetch user:', error)
-          logout()
-        }
+} catch {
+        logout()
+      }
       }
     }
     
@@ -283,8 +271,8 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
               item.track.artists.forEach((a: { id: string; name: string }) => artistIds.add(a.id))
             }
           })
-        } catch (err) {
-          console.warn(`Failed to load playlist ${playlist.name}:`, err)
+        } catch {
+          // Skip failed playlists
         }
         completed++
         setLoadingProgress({ 
@@ -317,8 +305,8 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
             item.track.artists.forEach((a: { id: string; name: string }) => artistIds.add(a.id))
           }
         })
-      } catch (err) {
-        console.warn('Failed to load liked songs:', err)
+      } catch {
+        // Continue without liked songs
       }
       
       // Skip artist genres initially for faster load - use empty map
@@ -358,8 +346,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
           hiddenGems: analytics.findHiddenGems(processed.tracks),
         })
       }
-    } catch (error) {
-      console.error('Failed to load data:', error)
+    } catch {
       setLoadingProgress({ stage: 'Error loading data', progress: 0 })
     } finally {
       setIsDataLoading(false)
@@ -377,10 +364,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
   
   // Load from local backend parquet exports (dev only)
   const loadFromBackend = useCallback(async () => {
-    if (!import.meta.env.DEV) {
-      console.warn('loadFromBackend is only available in development mode')
-      return
-    }
+    if (!import.meta.env.DEV) return
     
     setIsDataLoading(true)
     setLoadingProgress({ stage: 'Loading from local backend...', progress: 10 })
@@ -428,8 +412,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       setIsCached(false)
       
       setLoadingProgress({ stage: 'Done! Loaded from local backend.', progress: 100 })
-    } catch (error) {
-      console.error('Failed to load from backend:', error)
+    } catch {
       setLoadingProgress({ stage: 'Error loading local data', progress: 0 })
     } finally {
       setIsDataLoading(false)
@@ -464,8 +447,8 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         // Clear pending data
         setPendingArtistIds(new Set())
         setCachedTrackMap(null)
-      } catch (err) {
-        console.warn('Failed to load genres in background:', err)
+      } catch {
+        // Genre loading failed, continue with existing data
       } finally {
         setIsLoadingGenres(false)
       }

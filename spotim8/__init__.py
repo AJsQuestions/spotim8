@@ -32,7 +32,7 @@ from .features import (
     build_all_features,
 )
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 __all__ = [
     # Main client
