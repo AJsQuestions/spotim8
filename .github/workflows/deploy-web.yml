@@ -1,11 +1,13 @@
-# Deploy Spotim8 to GitHub Pages
+# Deploy Spotim8 Web App to GitHub Pages
 # Secrets required: VITE_SPOTIFY_CLIENT_ID (your Spotify app client ID)
 
-name: Deploy to GitHub Pages
+name: Deploy Web App
 
 on:
   push:
     branches: ['main']
+    paths:
+      - 'web/**'
   workflow_dispatch:
 
 permissions:
@@ -29,18 +31,16 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: spotim8/package-lock.json
+          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
-        working-directory: ./spotim8
+        working-directory: ./web
         run: npm ci
 
       - name: Build
-        working-directory: ./spotim8
+        working-directory: ./web
         run: npm run build
         env:
-          # Spotify Client ID is stored securely in GitHub Secrets
-          # Never commit this value to the repository
           VITE_SPOTIFY_CLIENT_ID: ${{ secrets.VITE_SPOTIFY_CLIENT_ID }}
 
       - name: Setup Pages
@@ -49,7 +49,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './spotim8/dist'
+          path: './web/dist'
 
   deploy:
     environment:
