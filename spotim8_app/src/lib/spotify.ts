@@ -179,28 +179,33 @@ async function fetchSpotify<T>(endpoint: string): Promise<T> {
 }
 
 // Fetch all pages of a paginated endpoint
-async function fetchAllPages<T>(endpoint: string, limit = 50): Promise<T[]> {
+async function fetchAllPages<T>(endpoint: string, pageLimit = 50, maxItems?: number): Promise<T[]> {
   const items: T[] = []
   let offset = 0
   let hasMore = true
   
   while (hasMore) {
     const separator = endpoint.includes('?') ? '&' : '?'
-    const data: any = await fetchSpotify(`${endpoint}${separator}limit=${limit}&offset=${offset}`)
+    const data: any = await fetchSpotify(`${endpoint}${separator}limit=${pageLimit}&offset=${offset}`)
     
     if (data.items) {
       items.push(...data.items)
       hasMore = data.next !== null
-      offset += limit
+      offset += pageLimit
+      
+      // Stop if we've reached the max items limit
+      if (maxItems && items.length >= maxItems) {
+        hasMore = false
+      }
     } else {
       hasMore = false
     }
     
-    // Rate limiting protection
-    await new Promise(resolve => setTimeout(resolve, 100))
+    // Rate limiting protection (reduced for speed)
+    await new Promise(resolve => setTimeout(resolve, 50))
   }
   
-  return items
+  return maxItems ? items.slice(0, maxItems) : items
 }
 
 // User Profile
@@ -261,8 +266,8 @@ export async function getPlaylistTracks(playlistId: string): Promise<PlaylistTra
 }
 
 // Saved/Liked Tracks
-export async function getSavedTracks(): Promise<PlaylistTrackItem[]> {
-  return fetchAllPages('/me/tracks')
+export async function getSavedTracks(maxItems?: number): Promise<PlaylistTrackItem[]> {
+  return fetchAllPages('/me/tracks', 50, maxItems)
 }
 
 // Top Artists and Tracks

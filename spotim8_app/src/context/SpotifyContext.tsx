@@ -26,6 +26,7 @@ interface SpotifyContextType {
   
   // Data state
   isDataLoading: boolean
+  isLoadingGenres: boolean
   loadingProgress: { stage: string; progress: number }
   libraryData: analytics.LibraryStats | null
   genreData: analytics.GenreData[]
@@ -51,7 +52,12 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<spotify.SpotifyUser | null>(null)
   
   const [isDataLoading, setIsDataLoading] = useState(false)
+  const [isLoadingGenres, setIsLoadingGenres] = useState(false)
   const [loadingProgress, setLoadingProgress] = useState({ stage: '', progress: 0 })
+  
+  // Store artist IDs and track map for lazy genre loading
+  const [pendingArtistIds, setPendingArtistIds] = useState<Set<string>>(new Set())
+  const [cachedTrackMap, setCachedTrackMap] = useState<Map<string, { track: spotify.SpotifyTrack; playlistIds: Set<string> }> | null>(null)
   
   const [libraryData, setLibraryData] = useState<analytics.LibraryStats | null>(null)
   const [genreData, setGenreData] = useState<analytics.GenreData[]>([])
@@ -167,10 +173,10 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         }
       }
       
-      // Fetch liked songs
-      setLoadingProgress({ stage: 'Loading liked songs...', progress: 65 })
+      // Fetch liked songs (limit to 200 for speed)
+      setLoadingProgress({ stage: 'Loading liked songs...', progress: 70 })
       try {
-        const likedTracks = await spotify.getSavedTracks()
+        const likedTracks = await spotify.getSavedTracks(200) // Limit for speed
         likedTracks.forEach((item: spotify.PlaylistTrackItem) => {
           if (item.track && item.track.id) {
             const existing = allTracks.get(item.track.id)
@@ -189,21 +195,11 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         console.warn('Failed to load liked songs:', err)
       }
       
-      // Fetch artist genres
-      setLoadingProgress({ stage: 'Fetching artist genres...', progress: 75 })
+      // Skip artist genres initially for faster load - use empty map
+      // Genres will show as "Other" until lazy-loaded in background
       const artistGenres = new Map<string, string[]>()
-      try {
-        const artists = await spotify.getArtists(Array.from(artistIds))
-        artists.forEach((artist: spotify.SpotifyArtist | null) => {
-          if (artist) {
-            artistGenres.set(artist.id, artist.genres)
-          }
-        })
-      } catch (err) {
-        console.warn('Failed to load artist genres:', err)
-      }
       
-      // Process analytics
+      // Process analytics immediately (without genre data)
       setLoadingProgress({ stage: 'Processing analytics...', progress: 90 })
       const processed = analytics.processLibraryData(userPlaylists, allTracks, artistGenres)
       
@@ -216,7 +212,11 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       setPopularityDistribution(processed.popularityDistribution)
       setHiddenGems(analytics.findHiddenGems(processed.tracks))
       
-      setLoadingProgress({ stage: 'Done!', progress: 100 })
+      // Save for lazy genre loading
+      setPendingArtistIds(artistIds)
+      setCachedTrackMap(allTracks)
+      
+      setLoadingProgress({ stage: 'Done! Loading genres in background...', progress: 100 })
     } catch (error) {
       console.error('Failed to load data:', error)
       setLoadingProgress({ stage: 'Error loading data', progress: 0 })
@@ -225,12 +225,53 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated])
   
+  // Lazy load genres in background after initial data load
+  useEffect(() => {
+    async function loadGenresInBackground() {
+      if (pendingArtistIds.size === 0 || !cachedTrackMap || !playlists.length) return
+      
+      setIsLoadingGenres(true)
+      
+      try {
+        const artistGenres = new Map<string, string[]>()
+        const artists = await spotify.getArtists(Array.from(pendingArtistIds))
+        artists.forEach((artist: spotify.SpotifyArtist | null) => {
+          if (artist) {
+            artistGenres.set(artist.id, artist.genres)
+          }
+        })
+        
+        // Re-process analytics with genre data
+        const processed = analytics.processLibraryData(playlists, cachedTrackMap, artistGenres)
+        
+        setGenreData(processed.genreData)
+        setTopArtists(processed.topArtists)
+        setTracks(processed.tracks)
+        setTimelineData(processed.timelineData)
+        setHiddenGems(analytics.findHiddenGems(processed.tracks))
+        
+        // Clear pending data
+        setPendingArtistIds(new Set())
+        setCachedTrackMap(null)
+      } catch (err) {
+        console.warn('Failed to load genres in background:', err)
+      } finally {
+        setIsLoadingGenres(false)
+      }
+    }
+    
+    // Start loading genres after a short delay to let UI render first
+    const timer = setTimeout(loadGenresInBackground, 500)
+    return () => clearTimeout(timer)
+  }, [pendingArtistIds, cachedTrackMap, playlists])
+  
   return (
     <SpotifyContext.Provider value={{
       isAuthenticated,
       isLoading,
       user,
       isDataLoading,
+      isLoadingGenres,
       loadingProgress,
       libraryData,
       genreData,
