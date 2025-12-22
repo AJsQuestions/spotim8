@@ -44,6 +44,13 @@ import numpy as np
 import pandas as pd
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+import time
+import random
+import requests
+
+# Adaptive backoff multiplier (increases after rate errors, decays on success)
+_RATE_BACKOFF_MULTIPLIER = 1.0
+_RATE_BACKOFF_MAX = 16.0
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -106,6 +113,76 @@ def log(msg: str) -> None:
     """Print message with timestamp."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {msg}")
+
+
+def api_call(fn, *args, max_retries: int = 6, backoff_factor: float = 1.0, **kwargs):
+    """Call Spotify API method `fn` with retries and exponential backoff on rate limits or transient errors.
+
+    `fn` should be a callable (typically a bound method on a `spotipy.Spotify` client).
+    The helper inspects exception attributes for 429/retry-after and uses exponential backoff.
+    """
+    for attempt in range(max_retries):
+        try:
+            result = fn(*args, **kwargs)
+            # Adaptive short delay between successful calls to avoid bursting the API
+            try:
+                base_delay = float(os.environ.get("SPOTIFY_API_DELAY", "0.15"))
+            except Exception:
+                base_delay = 0.15
+            # Multiply by adaptive multiplier (increases when we hit rate limits)
+            delay = base_delay * _RATE_BACKOFF_MULTIPLIER
+            if delay and delay > 0:
+                time.sleep(delay)
+            # Decay multiplier slowly towards 1.0 on success
+            try:
+                global _RATE_BACKOFF_MULTIPLIER
+                _RATE_BACKOFF_MULTIPLIER = max(1.0, _RATE_BACKOFF_MULTIPLIER * 0.90)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            status = getattr(e, "http_status", None) or getattr(e, "status", None)
+            # Try to find a Retry-After header if present
+            retry_after = None
+            headers = getattr(e, "headers", None)
+            if headers and isinstance(headers, dict):
+                retry_after = headers.get("Retry-After") or headers.get("retry-after")
+            # Spotipy may include the underlying response in args; try common locations
+            if not retry_after and hasattr(e, "args") and e.args:
+                try:
+                    # args may include a dict with 'headers'
+                    for a in e.args:
+                        if isinstance(a, dict) and "headers" in a and isinstance(a["headers"], dict):
+                            retry_after = a["headers"].get("Retry-After") or a["headers"].get("retry-after")
+                            break
+                except Exception:
+                    pass
+
+            is_rate = status == 429 or (retry_after is not None) or ("rate limit" in str(e).lower())
+            is_transient = isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+            if is_rate or is_transient:
+                wait = backoff_factor * (2 ** attempt) + random.uniform(0, 1)
+                if retry_after:
+                    try:
+                        wait = max(wait, int(retry_after))
+                    except Exception:
+                        pass
+                log(f"Transient/rate error: {e} — retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                # Increase adaptive multiplier to throttle further successful calls
+                try:
+                    global _RATE_BACKOFF_MULTIPLIER
+                    _RATE_BACKOFF_MULTIPLIER = min(_RATE_BACKOFF_MAX, _RATE_BACKOFF_MULTIPLIER * 2.0)
+                except Exception:
+                    pass
+                continue
+
+            # Not a retryable error; re-raise
+            raise
+
+    # Exhausted retries
+    raise RuntimeError(f"API call failed after {max_retries} attempts: {fn}")
 
 
 def get_spotify_client() -> spotipy.Spotify:
@@ -204,7 +281,7 @@ def get_existing_playlists(sp: spotipy.Spotify) -> dict:
     mapping = {}
     offset = 0
     while True:
-        page = sp.current_user_playlists(limit=50, offset=offset)
+        page = api_call(sp.current_user_playlists, limit=50, offset=offset)
         for item in page.get("items", []):
             mapping[item["name"]] = item["id"]
         if not page.get("next"):
@@ -218,11 +295,12 @@ def get_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> set:
     uris = set()
     offset = 0
     while True:
-        page = sp.playlist_items(
-            playlist_id, 
-            fields="items(track(uri)),next", 
-            limit=100, 
-            offset=offset
+        page = api_call(
+            sp.playlist_items,
+            playlist_id,
+            fields="items(track(uri)),next",
+            limit=100,
+            offset=offset,
         )
         for item in page.get("items", []):
             if item.get("track", {}).get("uri"):
@@ -312,10 +390,18 @@ def sync_liked_songs(sp: spotipy.Spotify) -> list:
     log("Syncing liked songs from Spotify...")
     
     liked_tracks = []
+    # Support resuming long syncs using a checkpoint file
+    checkpoint_path = DATA_DIR / ".liked_sync_offset"
     offset = 0
+    if checkpoint_path.exists():
+        try:
+            offset = int(checkpoint_path.read_text().strip() or 0)
+            log(f"Resuming liked songs sync from offset {offset}")
+        except Exception:
+            offset = 0
     
     while True:
-        page = sp.current_user_saved_tracks(limit=50, offset=offset)
+        page = api_call(sp.current_user_saved_tracks, limit=50, offset=offset)
         items = page.get("items", [])
         
         if not items:
@@ -332,9 +418,21 @@ def sync_liked_songs(sp: spotipy.Spotify) -> list:
                     "track_uri": track.get("uri"),
                 })
         
+        # Advance offset and write checkpoint so we can resume if the job times out
         if not page.get("next"):
+            offset += len(items)
+            try:
+                DATA_DIR.mkdir(exist_ok=True)
+                checkpoint_path.write_text(str(offset))
+            except Exception:
+                pass
             break
-        offset += 50
+        offset += len(items)
+        try:
+            DATA_DIR.mkdir(exist_ok=True)
+            checkpoint_path.write_text(str(offset))
+        except Exception:
+            pass
         
         if offset % 500 == 0:
             log(f"  Fetched {offset} liked songs...")
@@ -349,12 +447,23 @@ def sync_liked_songs(sp: spotipy.Spotify) -> list:
     playlist_tracks_path = DATA_DIR / "playlist_tracks.parquet"
     if playlist_tracks_path.exists():
         existing = pd.read_parquet(playlist_tracks_path)
-        # Remove old liked songs and add new
-        existing = existing[existing["playlist_id"] != LIKED_SONGS_PLAYLIST_ID]
-        df = pd.concat([existing, df], ignore_index=True)
+        # If resuming (checkpoint exists), assume earlier pages are already in `existing`.
+        if checkpoint_path.exists():
+            # Append only newly fetched rows (avoid duplicating existing liked songs)
+            df = pd.concat([existing, df], ignore_index=True)
+        else:
+            # Remove old liked songs and add new
+            existing = existing[existing["playlist_id"] != LIKED_SONGS_PLAYLIST_ID]
+            df = pd.concat([existing, df], ignore_index=True)
     
     df.to_parquet(playlist_tracks_path, index=False)
     log(f"  Saved to {playlist_tracks_path}")
+    # Sync complete - remove checkpoint
+    try:
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+    except Exception:
+        pass
     
     return liked_tracks
 
@@ -365,9 +474,18 @@ def sync_artists(sp: spotipy.Spotify, track_ids: list) -> tuple:
     
     all_artists = {}
     track_artists_data = []
+    # Support resuming artist sync via checkpointing (store processed artist ids)
+    artist_checkpoint = DATA_DIR / ".artist_sync_done"
+    processed_artists = set()
+    if artist_checkpoint.exists():
+        try:
+            processed_artists = set(artist_checkpoint.read_text().splitlines())
+            log(f"Resuming artist sync, already processed {len(processed_artists)} artists")
+        except Exception:
+            processed_artists = set()
     
     for chunk in _chunked(list(track_ids), 50):
-        tracks = sp.tracks(chunk)
+        tracks = api_call(sp.tracks, chunk)
         for track in tracks.get("tracks", []):
             if not track:
                 continue
@@ -379,12 +497,19 @@ def sync_artists(sp: spotipy.Spotify, track_ids: list) -> tuple:
                     all_artists[aid] = {"artist_id": aid, "name": artist.get("name")}
     
     # Get full artist info (including genres)
-    artist_ids = list(all_artists.keys())
+    artist_ids = [aid for aid in all_artists.keys() if aid not in processed_artists]
     for chunk in _chunked(artist_ids, 50):
-        artists = sp.artists(chunk)
+        artists = api_call(sp.artists, chunk)
         for artist in artists.get("artists", []):
             if artist:
                 all_artists[artist["id"]]["genres"] = artist.get("genres", [])
+                # Mark artist as processed in checkpoint
+                try:
+                    DATA_DIR.mkdir(exist_ok=True)
+                    with artist_checkpoint.open("a") as f:
+                        f.write(artist["id"] + "\n")
+                except Exception:
+                    pass
     
     # Save
     artists_df = pd.DataFrame(list(all_artists.values()))
@@ -463,34 +588,37 @@ def update_monthly_playlists(sp: spotipy.Spotify, current_month_only: bool = Tru
     
     # Get existing playlists
     existing = get_existing_playlists(sp)
-    user_id = sp.current_user()["id"]
+    user = api_call(sp.current_user)
+    user_id = user["id"]
     
     for month, uris in sorted(month_to_tracks.items()):
         if not uris:
             continue
         
         name = format_playlist_name(MONTHLY_NAME_TEMPLATE, month)
-        
         if name in existing:
             pid = existing[name]
             already = get_playlist_tracks(sp, pid)
             to_add = [u for u in uris if u not in already]
-            
+
             if to_add:
-                for chunk in _chunked(to_add, 100):
-                    sp.playlist_add_items(pid, chunk)
+                for chunk in _chunked(to_add, 50):
+                    api_call(sp.playlist_add_items, pid, chunk)
                 log(f"  {name}: +{len(to_add)} tracks")
             else:
                 log(f"  {name}: up to date")
         else:
-            pl = sp.user_playlist_create(
-                user_id, name, public=False,
-                description=f"Liked songs from {month}"
+            pl = api_call(
+                sp.user_playlist_create,
+                user_id,
+                name,
+                public=False,
+                description=f"Liked songs from {month}",
             )
             pid = pl["id"]
-            
-            for chunk in _chunked(uris, 100):
-                sp.playlist_add_items(pid, chunk)
+
+            for chunk in _chunked(uris, 50):
+                api_call(sp.playlist_add_items, pid, chunk)
             log(f"  {name}: created with {len(uris)} tracks")
     
     return month_to_tracks
@@ -526,7 +654,8 @@ def update_genre_split_playlists(sp: spotipy.Spotify, month_to_tracks: dict) -> 
     
     # Get existing playlists
     existing = get_existing_playlists(sp)
-    user_id = sp.current_user()["id"]
+    user = api_call(sp.current_user)
+    user_id = user["id"]
     
     for month, uris in sorted(month_to_tracks.items()):
         for genre in SPLIT_GENRES:
@@ -541,20 +670,23 @@ def update_genre_split_playlists(sp: spotipy.Spotify, month_to_tracks: dict) -> 
                 pid = existing[name]
                 already = get_playlist_tracks(sp, pid)
                 to_add = [u for u in genre_uris if u not in already]
-                
+
                 if to_add:
-                    for chunk in _chunked(to_add, 100):
-                        sp.playlist_add_items(pid, chunk)
+                    for chunk in _chunked(to_add, 50):
+                        api_call(sp.playlist_add_items, pid, chunk)
                     log(f"  {name}: +{len(to_add)} tracks")
             else:
-                pl = sp.user_playlist_create(
-                    user_id, name, public=False,
-                    description=f"{genre} tracks from {month}"
+                pl = api_call(
+                    sp.user_playlist_create,
+                    user_id,
+                    name,
+                    public=False,
+                    description=f"{genre} tracks from {month}",
                 )
                 pid = pl["id"]
-                
-                for chunk in _chunked(genre_uris, 100):
-                    sp.playlist_add_items(pid, chunk)
+
+                for chunk in _chunked(genre_uris, 50):
+                    api_call(sp.playlist_add_items, pid, chunk)
                 log(f"  {name}: created with {len(genre_uris)} tracks")
 
 
@@ -600,7 +732,8 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
     
     # Get existing playlists
     existing = get_existing_playlists(sp)
-    user_id = sp.current_user()["id"]
+    user = api_call(sp.current_user)
+    user_id = user["id"]
     
     for genre in selected:
         uris = [u for u in liked_uris if uri_to_genre.get(u) == genre]
@@ -613,20 +746,23 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
             pid = existing[name]
             already = get_playlist_tracks(sp, pid)
             to_add = [u for u in uris if u not in already]
-            
+
             if to_add:
-                for chunk in _chunked(to_add, 100):
-                    sp.playlist_add_items(pid, chunk)
+                for chunk in _chunked(to_add, 50):
+                    api_call(sp.playlist_add_items, pid, chunk)
                 log(f"  {name}: +{len(to_add)} tracks")
         else:
-            pl = sp.user_playlist_create(
-                user_id, name, public=False,
-                description=f"All liked songs - {genre}"
+            pl = api_call(
+                sp.user_playlist_create,
+                user_id,
+                name,
+                public=False,
+                description=f"All liked songs - {genre}",
             )
             pid = pl["id"]
-            
-            for chunk in _chunked(uris, 100):
-                sp.playlist_add_items(pid, chunk)
+
+            for chunk in _chunked(uris, 50):
+                api_call(sp.playlist_add_items, pid, chunk)
             log(f"  {name}: created with {len(uris)} tracks")
 
 
@@ -667,7 +803,7 @@ Examples:
     # Authenticate
     try:
         sp = get_spotify_client()
-        user = sp.current_user()
+        user = api_call(sp.current_user)
         log(f"Authenticated as: {user['display_name']} ({user['id']})")
     except Exception as e:
         log(f"ERROR: Authentication failed: {e}")
