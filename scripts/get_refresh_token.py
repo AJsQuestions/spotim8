@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Get Spotify Refresh Token for GitHub Actions
+Get Spotify Refresh Token for Automated Runs
 
 Run this script locally ONCE to get your refresh token,
-then add it to GitHub Secrets.
+then add it to your .env file for automated/local runs without browser.
 
 Usage:
     python scripts/get_refresh_token.py
@@ -102,13 +102,13 @@ def main():
     print()
     print("=" * 60)
     print()
-    print("Now add these secrets to your GitHub repository:")
-    print("  Settings → Secrets and variables → Actions → New repository secret")
+    print("Add this to your .env file:")
+    print("  SPOTIPY_CLIENT_ID=" + client_id)
+    print("  SPOTIPY_CLIENT_SECRET=" + client_secret)
+    print("  SPOTIPY_REDIRECT_URI=" + redirect_uri)
+    print("  SPOTIPY_REFRESH_TOKEN=" + refresh_token)
     print()
-    print("  SPOTIPY_CLIENT_ID      = " + client_id)
-    print("  SPOTIPY_CLIENT_SECRET  = " + client_secret)
-    print("  SPOTIPY_REDIRECT_URI   = " + redirect_uri)
-    print("  SPOTIPY_REFRESH_TOKEN  = " + refresh_token)
+    print("Or export these environment variables before running the sync script.")
     print()
 
 

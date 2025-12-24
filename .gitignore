@@ -24,9 +24,6 @@ wheels/
 .installed.cfg
 *.egg
 
-# Exclude web app's lib/ from the Python ignore
-!spotim8_app/src/lib/
-
 # ----- Virtual Environments -----
 .env
 .venv
@@ -69,15 +66,13 @@ data/meta.json
 data/streaming_history/*.json
 !data/streaming_history/README.md
 
-# ----- Web App -----
-spotim8_app/node_modules/
-spotim8_app/dist/
-spotim8_app/public/dev-data/
-spotim8_app/.env
-spotim8_app/.env.local
+# Checkpoint files (for resuming interrupted syncs)
+data/.liked_sync_offset
+data/.artist_sync_done
 
 # ----- Logs -----
 *.log
+logs/
 
 # ----- Environment Variables -----
 .env

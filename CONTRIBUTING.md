@@ -25,25 +25,9 @@ black spotim8/
 ruff check spotim8/
 ```
 
-### Web App
-
-```bash
-cd spotim8_app
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-
-# Build for production
-npm run build
-```
-
 ## Code Style
 
 - **Python**: Follow PEP 8, use `black` for formatting, `ruff` for linting
-- **TypeScript/React**: Use consistent patterns from existing code
 - **Commits**: Use clear, descriptive commit messages
 
 ## Pull Request Process
@@ -58,7 +42,6 @@ npm run build
 
 ```
 spotim8/           # Python library core
-spotim8_app/       # React web application
 notebooks/         # Jupyter notebooks for analysis
 scripts/           # Automation scripts
 tests/             # Test suite

@@ -25,11 +25,14 @@ Environment Variables:
         PLAYLIST_OWNER_NAME     - Prefix for playlist names (default: "AJ")
         PLAYLIST_PREFIX         - Month playlist prefix (default: "Finds")
 
-Run via cron or GitHub Actions:
-    # Linux/Mac cron (every day at 2am):
-    0 2 * * * /path/to/python /path/to/spotify_sync.py
+Run locally or via cron:
+    # Direct run:
+    python scripts/spotify_sync.py
     
-    # GitHub Actions - uses refresh token for headless auth
+    # Linux/Mac cron (every day at 2am):
+    0 2 * * * cd /path/to/spotim8 && ./scripts/run_sync_local.sh
+    
+    # Uses refresh token for headless/automated auth
 """
 
 import argparse

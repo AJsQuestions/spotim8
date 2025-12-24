@@ -4,19 +4,15 @@ Your **personal Spotify analytics platform** with **automated playlist managemen
 
 Turn your Spotify library into tidy DataFrames, analyze your listening habits, and automatically organize your music into smart playlists.
 
-[![Spotify Sync](https://github.com/AJsQuestions/spotim8/actions/workflows/spotify_sync.yml/badge.svg)](https://github.com/AJsQuestions/spotim8/actions/workflows/spotify_sync.yml)
-[![Deploy Web App](https://github.com/AJsQuestions/spotim8/actions/workflows/deploy-web.yml/badge.svg)](https://github.com/AJsQuestions/spotim8/actions/workflows/deploy-web.yml)
-
 ## ✨ Features
 
 - 📊 **Pandas DataFrames** - Your library as tidy, mergeable tables
 - 📅 **Monthly Playlists** - Auto-create playlists like `FindsDec25`
 - 🎸 **Genre-Split Playlists** - Separate by HipHop, Dance, Other
 - 🎵 **Master Genre Playlists** - All-time playlists by genre
-- 🤖 **Daily Automation** - GitHub Actions updates playlists automatically
+- 🤖 **Daily Automation** - Local cron job updates playlists automatically
 - 💾 **Local Cache** - Parquet files for fast offline access
 - 🔄 **No Duplicates** - Smart deduplication on every run
-- 🌐 **Web Dashboard** - Beautiful React UI for analysis (see `spotim8_app/`)
 
 ## 🚀 Quick Start
 
@@ -81,47 +77,76 @@ export PLAYLIST_OWNER_NAME=""      # Your prefix (optional)
 export PLAYLIST_PREFIX="Finds"     # Month playlist prefix
 ```
 
-## 🤖 Daily Automation (GitHub Actions)
+## 🤖 Local Automation
 
-Playlists update automatically every day at 6am PT (14:00 UTC).
+Run the sync script locally for better reliability and no timeout issues. Large libraries can take hours to sync, which often exceeds CI/CD time limits.
 
-### Setup:
-
-1. Fork this repo
-2. Run `python scripts/get_refresh_token.py` locally to get your refresh token
-3. Add these **secrets** to your repo (Settings → Secrets → Actions):
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `SPOTIPY_CLIENT_ID` | ✅ | Your Spotify app client ID |
-| `SPOTIPY_CLIENT_SECRET` | ✅ | Your Spotify app client secret |
-| `SPOTIPY_REDIRECT_URI` | ✅ | `http://127.0.0.1:8888/callback` |
-| `SPOTIPY_REFRESH_TOKEN` | ✅ | Get via `get_refresh_token.py` |
-| `PLAYLIST_OWNER_NAME` | ❌ | Your name for playlists (default: "") |
-| `PLAYLIST_PREFIX` | ❌ | Prefix like "Finds" (default: "Finds") |
-
-### Manual trigger:
-
-Actions → Spotify Sync → Run workflow
-
-## 🌐 Web App
-
-A modern React-based Spotify analytics dashboard:
+### Quick Start
 
 ```bash
-cd spotim8_app
-npm install
-npm run dev
+# Run sync + playlist updates (first time setup - can take 1-2+ hours for large libraries)
+python scripts/spotify_sync.py
+
+# Or use the helper script (handles environment variables)
+./scripts/run_sync_local.sh
 ```
 
-**Features:**
-- 🔒 Privacy-first (all data processed in browser)
-- 📊 Interactive charts and visualizations
-- 🎯 Playlist clusters and hidden gems
-- 🎸 Genre breakdown and artist treemaps
-- 📈 Release timeline analysis
+### Environment Setup
 
-See [spotim8_app/README.md](spotim8_app/README.md) for self-hosting instructions.
+Create a `.env` file in the project root (or export variables):
+
+```bash
+SPOTIPY_CLIENT_ID=your_client_id
+SPOTIPY_CLIENT_SECRET=your_client_secret
+SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
+PLAYLIST_OWNER_NAME=""        # Optional: prefix for playlists
+PLAYLIST_PREFIX="Finds"        # Optional: month playlist prefix
+```
+
+**Note:** On first run, you'll authenticate via browser. For automated runs, get a refresh token:
+```bash
+python scripts/get_refresh_token.py
+# Then add to .env: SPOTIPY_REFRESH_TOKEN=your_refresh_token
+```
+
+### Scheduled Automation (Cron)
+
+Set up daily sync on Linux/Mac:
+
+```bash
+# Easy setup (recommended):
+./scripts/setup_cron.sh
+
+# Or manually edit crontab:
+crontab -e
+# Add: 0 2 * * * cd /path/to/spotim8 && ./scripts/run_sync_local.sh >> logs/sync.log 2>&1
+```
+
+The cron job runs daily at 2:00 AM and logs to `logs/sync.log`.
+
+### Sync Options
+
+```bash
+# Full sync + playlist update (default)
+python scripts/spotify_sync.py
+
+# Skip sync, only update playlists (fast, uses existing data)
+python scripts/spotify_sync.py --skip-sync
+
+# Sync only, don't update playlists
+python scripts/spotify_sync.py --sync-only
+
+# Process all months, not just current month
+python scripts/spotify_sync.py --all-months
+```
+
+### Why Local Execution?
+
+- ✅ **No timeouts** - Large libraries can sync for hours without interruption
+- ✅ **Faster** - No CI/CD overhead, direct API access
+- ✅ **Resumable** - Script supports checkpointing for interrupted syncs
+- ✅ **Cost-free** - Uses your own machine, no CI minutes
+- ✅ **Better debugging** - Direct access to logs and data files
 
 ## 📁 Data Tables
 
@@ -156,13 +181,6 @@ spotim8/
 │   ├── catalog.py                # Data caching layer
 │   ├── cli.py                    # Command line interface
 │   └── features.py               # Feature engineering
-├── spotim8_app/                  # React web app
-│   ├── src/
-│   │   ├── components/           # UI components
-│   │   ├── context/              # Spotify auth context
-│   │   ├── lib/                  # Analytics & API
-│   │   └── pages/                # Dashboard pages
-│   └── package.json
 ├── notebooks/
 │   ├── 01_sync_data.ipynb
 │   ├── 02_analyze_library.ipynb
@@ -171,11 +189,9 @@ spotim8/
 │   └── lib.py                    # Shared utilities
 ├── scripts/
 │   ├── spotify_sync.py           # Unified sync & playlist update
-│   ├── get_refresh_token.py      # Get token for CI/CD
-│   └── export_for_web.py         # Export data for web app
+│   └── get_refresh_token.py      # Get token for CI/CD
 ├── .github/workflows/
-│   ├── spotify_sync.yml          # Daily sync & playlist update
-│   └── deploy-web.yml            # Web app deployment
+│   └── spotify_sync.yml          # Daily sync & playlist update
 ├── examples/
 │   └── 01_quickstart.py          # Quick start example
 └── data/                         # Cached parquet files (gitignored)
