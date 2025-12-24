@@ -71,7 +71,7 @@ SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
 SPOTIPY_REFRESH_TOKEN=your_refresh_token_here
 
 # Optional: Customize playlist naming
-PLAYLIST_OWNER_NAME=YourName
+PLAYLIST_OWNER_NAME=AJ
 PLAYLIST_PREFIX=Finds
 ```
 

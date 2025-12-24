@@ -117,7 +117,7 @@ def main():
                     f.write("SPOTIPY_CLIENT_SECRET=your_client_secret_here\n")
                     f.write("SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback\n")
                     f.write("SPOTIPY_REFRESH_TOKEN=your_refresh_token_here\n")
-                    f.write("PLAYLIST_OWNER_NAME=YourName\n")
+                    f.write("PLAYLIST_OWNER_NAME=AJ\n")
                     f.write("PLAYLIST_PREFIX=Finds\n")
                 print("   ✅ Created .env file")
 
@@ -167,7 +167,7 @@ def main():
             f.write(f"SPOTIPY_REFRESH_TOKEN={env_vars.get('SPOTIPY_REFRESH_TOKEN', 'your_refresh_token_here')}\n")
             f.write("\n")
             f.write("# Optional: Customize playlist naming\n")
-            f.write(f"PLAYLIST_OWNER_NAME={env_vars.get('PLAYLIST_OWNER_NAME', 'YourName')}\n")
+            f.write(f"PLAYLIST_OWNER_NAME={env_vars.get('PLAYLIST_OWNER_NAME', 'AJ')}\n")
             f.write(f"PLAYLIST_PREFIX={env_vars.get('PLAYLIST_PREFIX', 'Finds')}\n")
 
         print()
