@@ -39,6 +39,13 @@ from .genres import (
     get_split_genre,
     get_broad_genre,
 )
+from .analysis import (
+    LibraryAnalyzer,
+    PlaylistSimilarityEngine,
+    get_genres_list,
+    build_playlist_genre_profiles,
+    canonical_core_genre,
+)
 
 __version__ = "1.0.0"
 
@@ -69,4 +76,10 @@ __all__ = [
     "ALL_BROAD_GENRES",
     "get_split_genre",
     "get_broad_genre",
+    # Analysis utilities
+    "LibraryAnalyzer",
+    "PlaylistSimilarityEngine",
+    "get_genres_list",
+    "build_playlist_genre_profiles",
+    "canonical_core_genre",
 ]

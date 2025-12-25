@@ -23,6 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+spotim8.egg-info/
 
 # ----- Virtual Environments -----
 .env

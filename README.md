@@ -215,20 +215,24 @@ spotim8/
 │   ├── client.py                 # Main Spotim8 class
 │   ├── catalog.py                # Data caching layer
 │   ├── cli.py                    # Command line interface
-│   └── features.py               # Feature engineering
-├── notebooks/
-│   ├── 01_sync_data.ipynb
-│   ├── 02_analyze_library.ipynb
-│   ├── 03_playlist_analysis.ipynb
-│   ├── 04_liked_songs_monthly_playlists.ipynb
-│   └── lib.py                    # Shared utilities
-├── scripts/
+│   ├── features.py               # Feature engineering
+│   ├── genres.py                 # Genre classification
+│   ├── analysis.py               # Library analysis utilities
+│   └── ...                       # Other utilities
+├── notebooks/                    # Jupyter notebooks for analysis
+│   ├── 01_sync_data.ipynb        # Sync library data
+│   ├── 02_analyze_library.ipynb  # Visualize listening habits
+│   ├── 03_playlist_analysis.ipynb # Genre analysis & clustering
+│   └── 04_liked_songs_monthly_playlists.ipynb # Create playlists
+├── scripts/                      # Automation scripts
 │   ├── spotify_sync.py           # Unified sync & playlist update
-│   ├── run_sync_local.py         # Local sync runner
+│   ├── run_sync_local.py         # Local sync runner (cron wrapper)
+│   ├── setup_local.py            # Initial setup helper
 │   ├── get_refresh_token.py      # Get token for automation
-│   └── setup_cron.sh             # Cron setup script
+│   └── setup_cron.sh             # Cron job setup
 ├── examples/
 │   └── 01_quickstart.py          # Quick start example
+├── tests/                        # Test suite
 └── data/                         # Cached parquet files (gitignored)
 ```
 

@@ -1,23 +1,17 @@
 """
-Shared utilities for Spotify analysis notebooks.
+Library analysis utilities for Spotify data.
 
-This module provides the LibraryAnalyzer class for modular data filtering.
+Provides LibraryAnalyzer and PlaylistSimilarityEngine for analyzing
+and filtering Spotify library data.
 """
 
 import re
-import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from collections import Counter
 from typing import Optional, List, Set, Dict
 
-# Add parent directory to path to import spotim8
-_parent = Path(__file__).resolve().parent.parent
-if str(_parent) not in sys.path:
-    sys.path.insert(0, str(_parent))
-
-# Import exhaustive genre rules from spotim8
 from spotim8.genres import (
     GENRE_SPLIT_RULES,
     SPLIT_GENRES,
@@ -76,7 +70,7 @@ class LibraryAnalyzer:
             self.track_artists_all = pd.read_parquet(self.data_dir / "track_artists.parquet")
         except FileNotFoundError as e:
             raise FileNotFoundError(
-                f"Data not found in {self.data_dir}. Run 01_sync_data.ipynb first!"
+                f"Data not found in {self.data_dir}. Run sync first!"
             ) from e
         
         # Detect special playlists
@@ -328,7 +322,10 @@ class PlaylistSimilarityEngine:
         if playlist_id not in self._playlist_ids:
             return []
         
-        from sklearn.metrics.pairwise import cosine_similarity
+        try:
+            from sklearn.metrics.pairwise import cosine_similarity
+        except ImportError:
+            raise ImportError("scikit-learn is required for playlist similarity. Install with: pip install scikit-learn")
         
         idx = self._playlist_ids.index(playlist_id)
         source_vec = self._vectors[idx:idx+1]
