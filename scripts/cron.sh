@@ -5,7 +5,7 @@
 # It will add a cron job that runs at 2am daily.
 #
 # Usage:
-#   ./scripts/setup_cron.sh
+#   ./scripts/cron.sh
 
 set -e
 
@@ -13,7 +13,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SYNC_SCRIPT="$PROJECT_ROOT/scripts/run_sync_local.py"
+SYNC_SCRIPT="$PROJECT_ROOT/scripts/runner.py"
 LOG_DIR="$PROJECT_ROOT/logs"
 
 # Verify the sync script exists
@@ -37,7 +37,7 @@ CRON_COMMAND="cd $PROJECT_ROOT && /bin/bash -c 'source venv/bin/activate 2>/dev/
 TEMP_CRON=$(mktemp)
 
 # Get existing crontab (if any) and filter out any existing spotim8 entries
-(crontab -l 2>/dev/null | grep -v "spotim8\|run_sync_local" || true) > "$TEMP_CRON"
+(crontab -l 2>/dev/null | grep -v "spotim8\|scripts/runner" || true) > "$TEMP_CRON"
 
 # Add the new cron job
 echo "$CRON_SCHEDULE $CRON_COMMAND" >> "$TEMP_CRON"
@@ -58,7 +58,7 @@ echo "To view your crontab:"
 echo "  crontab -l"
 echo ""
 echo "To remove this cron job:"
-echo "  crontab -e  # Then delete the line with 'spotim8' or 'run_sync_local'"
+echo "  crontab -e  # Then delete the line with 'spotim8' or 'scripts/runner'"
 echo ""
 echo "To test the sync script manually:"
 echo "  python $SYNC_SCRIPT"

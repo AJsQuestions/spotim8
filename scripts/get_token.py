@@ -6,7 +6,7 @@ Run this script locally ONCE to get your refresh token,
 then add it to your .env file for automated/local runs without browser.
 
 Usage:
-    python scripts/get_refresh_token.py
+    python scripts/get_token.py
 """
 
 import os

@@ -347,7 +347,10 @@ class PlaylistSimilarityEngine:
                 continue
             
             info = playlist_info.loc[pid]
-            is_owned = info.get('is_owned', False)
+            # playlist_info.loc[pid] returns a Series, use direct indexing
+            is_owned = bool(info['is_owned']) if 'is_owned' in info.index else False
+            name = str(info['name']) if 'name' in info.index else 'Unknown'
+            track_count = int(info['track_count']) if 'track_count' in info.index else 0
             
             # Apply filters
             if only_followed and is_owned:
@@ -357,10 +360,10 @@ class PlaylistSimilarityEngine:
             
             results.append({
                 'playlist_id': pid,
-                'name': info.get('name', 'Unknown'),
+                'name': name,
                 'similarity': float(similarities[i]),
                 'is_owned': is_owned,
-                'track_count': int(info.get('track_count', 0)),
+                'track_count': track_count,
             })
             
             if len(results) >= top_n:

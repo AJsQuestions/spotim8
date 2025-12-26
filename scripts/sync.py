@@ -3,18 +3,22 @@
 Unified Spotify Sync & Playlist Update
 
 This script:
-1. Syncs your Spotify library to local parquet files (optional)
-2. Updates monthly playlists with liked songs
-3. Updates genre-split monthly playlists
-4. Updates master genre playlists
+1. Syncs your Spotify library to local parquet files using spotim8 (optional)
+2. Consolidates old monthly playlists into yearly genre-split playlists
+3. Updates monthly playlists with liked songs (current year only)
+4. Updates genre-split monthly playlists (HipHop, Dance, Other)
+5. Updates master genre playlists
+
+The script automatically loads environment variables from .env file if python-dotenv
+is installed and a .env file exists in the project root.
 
 Usage:
-    python scripts/spotify_sync.py              # Full sync + update
-    python scripts/spotify_sync.py --skip-sync  # Update only (fast, uses existing data)
-    python scripts/spotify_sync.py --sync-only  # Sync only, no playlist changes
-    python scripts/spotify_sync.py --all-months # Process all months, not just current
+    python scripts/sync.py              # Full sync + update
+    python scripts/sync.py --skip-sync  # Update only (fast, uses existing data)
+    python scripts/sync.py --sync-only  # Sync only, no playlist changes
+    python scripts/sync.py --all-months # Process all months, not just current
 
-Environment Variables:
+Environment Variables (set in .env file or environment):
     Required:
         SPOTIPY_CLIENT_ID       - Spotify app client ID
         SPOTIPY_CLIENT_SECRET   - Spotify app client secret
@@ -24,19 +28,31 @@ Environment Variables:
         SPOTIPY_REFRESH_TOKEN   - Refresh token for headless/CI auth
         PLAYLIST_OWNER_NAME     - Prefix for playlist names (default: "AJ")
         PLAYLIST_PREFIX         - Month playlist prefix (default: "Finds")
+        
+        Email Notifications (optional):
+        EMAIL_ENABLED           - Enable email notifications (true/false)
+        EMAIL_SMTP_HOST         - SMTP server (e.g., smtp.gmail.com)
+        EMAIL_SMTP_PORT         - SMTP port (default: 587)
+        EMAIL_SMTP_USER         - SMTP username
+        EMAIL_SMTP_PASSWORD     - SMTP password (use app password for Gmail)
+        EMAIL_TO                - Recipient email address
+        EMAIL_FROM              - Sender email (defaults to EMAIL_SMTP_USER)
+        EMAIL_SUBJECT_PREFIX    - Subject prefix (default: "[Spotify Sync]")
 
 Run locally or via cron:
-    # Direct run:
-    python scripts/spotify_sync.py
+    # Direct run (loads .env automatically):
+    python scripts/sync.py
+    
+    # Via wrapper (for cron):
+    python scripts/runner.py
     
     # Linux/Mac cron (every day at 2am):
-    0 2 * * * cd /path/to/spotim8 && /path/to/venv/bin/python scripts/run_sync_local.py
-    
-    # Uses refresh token for headless/automated auth
+    0 2 * * * cd /path/to/spotim8 && /path/to/venv/bin/python scripts/runner.py
 """
 
 import argparse
 import ast
+import io
 import os
 import sys
 from collections import Counter
@@ -51,6 +67,13 @@ import time
 import random
 import requests
 
+# Try to load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
 # Adaptive backoff multiplier (increases after rate errors, decays on success)
 _RATE_BACKOFF_MULTIPLIER = 1.0
 _RATE_BACKOFF_MAX = 16.0
@@ -59,18 +82,30 @@ _RATE_BACKOFF_MAX = 16.0
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Try to import spotim8 for full library sync
-try:
-    from spotim8 import Spotim8, CacheConfig, set_response_cache
-    SPOTIM8_AVAILABLE = True
-except ImportError:
-    SPOTIM8_AVAILABLE = False
+# Import spotim8 for full library sync (required)
+from spotim8 import Spotim8, CacheConfig, set_response_cache
 
-# Import exhaustive genre rules from shared module
+# Import genre classification functions from shared module
 from spotim8.genres import (
-    GENRE_SPLIT_RULES, SPLIT_GENRES, GENRE_RULES,
+    SPLIT_GENRES,
     get_split_genre, get_broad_genre
 )
+
+# Import email notification module
+try:
+    import importlib.util
+    email_notify_path = Path(__file__).parent / "email_notify.py"
+    if email_notify_path.exists():
+        spec = importlib.util.spec_from_file_location("email_notify", email_notify_path)
+        email_notify = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(email_notify)
+        send_email_notification = email_notify.send_email_notification
+        is_email_enabled = email_notify.is_email_enabled
+        EMAIL_AVAILABLE = True
+    else:
+        EMAIL_AVAILABLE = False
+except Exception:
+    EMAIL_AVAILABLE = False
 
 
 # ============================================================================
@@ -101,22 +136,28 @@ MONTH_NAMES = {
     "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"
 }
 
-# Genre rules imported from spotim8.genres module (exhaustive list)
-# See spotim8/genres.py for the full definitions of:
-# - GENRE_SPLIT_RULES (HipHop, Dance keywords)
-# - SPLIT_GENRES (["HipHop", "Dance", "Other"])
-# - GENRE_RULES (broad category mappings)
-# - get_split_genre() and get_broad_genre() functions
+# Genre classification functions:
+# - get_split_genre() - Maps tracks to HipHop, Dance, or Other
+# - get_broad_genre() - Maps tracks to broad categories (Hip-Hop, Electronic, etc.)
+# - SPLIT_GENRES - List of split genres: ["HipHop", "Dance", "Other"]
 
 
 # ============================================================================
 # UTILITIES
 # ============================================================================
 
+# Global log buffer for email notifications
+_log_buffer = []
+
 def log(msg: str) -> None:
-    """Print message with timestamp."""
+    """Print message with timestamp and optionally buffer for email."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
+    log_line = f"[{timestamp}] {msg}"
+    print(log_line)
+    
+    # Buffer log for email notification
+    if EMAIL_AVAILABLE and is_email_enabled():
+        _log_buffer.append(log_line)
 
 
 def api_call(fn, *args, max_retries: int = 6, backoff_factor: float = 1.0, **kwargs):
@@ -201,7 +242,10 @@ def get_spotify_client() -> spotipy.Spotify:
     refresh_token = os.environ.get("SPOTIPY_REFRESH_TOKEN")
     
     if not all([client_id, client_secret]):
-        raise ValueError("Missing SPOTIPY_CLIENT_ID or SPOTIPY_CLIENT_SECRET")
+        raise ValueError(
+            "Missing SPOTIPY_CLIENT_ID or SPOTIPY_CLIENT_SECRET. "
+            "Set them in environment variables or .env file."
+        )
     
     scopes = "user-library-read playlist-modify-private playlist-modify-public playlist-read-private"
     
@@ -353,10 +397,6 @@ def sync_full_library() -> bool:
     - track_artists.parquet
     - artists.parquet
     """
-    if not SPOTIM8_AVAILABLE:
-        log("⚠️  spotim8 not available, skipping full library sync")
-        return False
-    
     log("\n--- Full Library Sync ---")
     
     try:
@@ -403,148 +443,12 @@ def sync_full_library() -> bool:
         return True
         
     except Exception as e:
-        log(f"⚠️  Full library sync failed: {e}")
+        log(f"ERROR: Full library sync failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 
-def sync_liked_songs(sp: spotipy.Spotify) -> list:
-    """Sync liked songs from Spotify API and save to parquet."""
-    log("Syncing liked songs from Spotify...")
-    
-    liked_tracks = []
-    # Support resuming long syncs using a checkpoint file
-    checkpoint_path = DATA_DIR / ".liked_sync_offset"
-    offset = 0
-    if checkpoint_path.exists():
-        try:
-            offset = int(checkpoint_path.read_text().strip() or 0)
-            log(f"Resuming liked songs sync from offset {offset}")
-        except Exception:
-            offset = 0
-    
-    while True:
-        page = api_call(sp.current_user_saved_tracks, limit=50, offset=offset)
-        items = page.get("items", [])
-        
-        if not items:
-            break
-        
-        for item in items:
-            track = item.get("track", {})
-            if track.get("id"):
-                liked_tracks.append({
-                    "playlist_id": LIKED_SONGS_PLAYLIST_ID,
-                    "track_id": track["id"],
-                    "added_at": item.get("added_at"),
-                    "track_name": track.get("name"),
-                    "track_uri": track.get("uri"),
-                })
-        
-        # Advance offset and write checkpoint so we can resume if the job times out
-        if not page.get("next"):
-            offset += len(items)
-            try:
-                DATA_DIR.mkdir(exist_ok=True)
-                checkpoint_path.write_text(str(offset))
-            except Exception:
-                pass
-            break
-        offset += len(items)
-        try:
-            DATA_DIR.mkdir(exist_ok=True)
-            checkpoint_path.write_text(str(offset))
-        except Exception:
-            pass
-        
-        if offset % 500 == 0:
-            log(f"  Fetched {offset} liked songs...")
-    
-    log(f"  Total: {len(liked_tracks)} liked songs")
-    
-    # Save to parquet
-    df = pd.DataFrame(liked_tracks)
-    DATA_DIR.mkdir(exist_ok=True)
-    
-    # Load existing or create new
-    playlist_tracks_path = DATA_DIR / "playlist_tracks.parquet"
-    if playlist_tracks_path.exists():
-        existing = pd.read_parquet(playlist_tracks_path)
-        # If resuming (checkpoint exists), assume earlier pages are already in `existing`.
-        if checkpoint_path.exists():
-            # Append only newly fetched rows (avoid duplicating existing liked songs)
-            df = pd.concat([existing, df], ignore_index=True)
-        else:
-            # Remove old liked songs and add new
-            existing = existing[existing["playlist_id"] != LIKED_SONGS_PLAYLIST_ID]
-            df = pd.concat([existing, df], ignore_index=True)
-    
-    df.to_parquet(playlist_tracks_path, index=False)
-    log(f"  Saved to {playlist_tracks_path}")
-    # Sync complete - remove checkpoint
-    try:
-        if checkpoint_path.exists():
-            checkpoint_path.unlink()
-    except Exception:
-        pass
-    
-    return liked_tracks
-
-
-def sync_artists(sp: spotipy.Spotify, track_ids: list) -> tuple:
-    """Sync artist data for tracks."""
-    log("Syncing artist data...")
-    
-    all_artists = {}
-    track_artists_data = []
-    # Support resuming artist sync via checkpointing (store processed artist ids)
-    artist_checkpoint = DATA_DIR / ".artist_sync_done"
-    processed_artists = set()
-    if artist_checkpoint.exists():
-        try:
-            processed_artists = set(artist_checkpoint.read_text().splitlines())
-            log(f"Resuming artist sync, already processed {len(processed_artists)} artists")
-        except Exception:
-            processed_artists = set()
-    
-    for chunk in _chunked(list(track_ids), 50):
-        tracks = api_call(sp.tracks, chunk)
-        for track in tracks.get("tracks", []):
-            if not track:
-                continue
-            tid = track["id"]
-            for artist in track.get("artists", []):
-                aid = artist["id"]
-                track_artists_data.append({"track_id": tid, "artist_id": aid})
-                if aid not in all_artists:
-                    all_artists[aid] = {"artist_id": aid, "name": artist.get("name")}
-    
-    # Get full artist info (including genres)
-    artist_ids = [aid for aid in all_artists.keys() if aid not in processed_artists]
-    for chunk in _chunked(artist_ids, 50):
-        artists = api_call(sp.artists, chunk)
-        for artist in artists.get("artists", []):
-            if artist:
-                all_artists[artist["id"]]["genres"] = artist.get("genres", [])
-                # Mark artist as processed in checkpoint
-                try:
-                    DATA_DIR.mkdir(exist_ok=True)
-                    with artist_checkpoint.open("a") as f:
-                        f.write(artist["id"] + "\n")
-                except Exception:
-                    pass
-    
-    # Save
-    artists_df = pd.DataFrame(list(all_artists.values()))
-    artists_df.to_parquet(DATA_DIR / "artists.parquet", index=False)
-    
-    track_artists_df = pd.DataFrame(track_artists_data)
-    track_artists_df.to_parquet(DATA_DIR / "track_artists.parquet", index=False)
-    
-    log(f"  Saved {len(artists_df)} artists, {len(track_artists_df)} track-artist links")
-    
-    return artists_df, track_artists_df
 
 
 # ============================================================================
@@ -649,18 +553,25 @@ def update_monthly_playlists(sp: spotipy.Spotify, current_month_only: bool = Tru
 
 
 def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
-    """Consolidate monthly playlists older than the last 2 years into yearly playlists.
+    """Consolidate monthly playlists older than the last year into yearly playlists.
     
-    Only keeps the last 2 years as monthly (current year and previous year).
+    Only keeps the last year as monthly (current year).
     For any year older than that:
-    - Combine all monthly playlists (e.g., AJFindsJan23, AJFindsFeb23, ...) 
-      into a single yearly playlist (e.g., AJFinds2023)
+    - Combine all monthly playlists (e.g., AJFindsJan22, AJFindsFeb22, ...) 
+      into 4 yearly playlists:
+      - AJFinds{YY} - all tracks from that year
+      - AJFindsHipHop{YY} - hip hop tracks from that year
+      - AJFindsDance{YY} - dance tracks from that year
+      - AJFindsOther{YY} - other tracks from that year
     - Delete the old monthly playlists
+    
+    If monthly playlists don't exist for a year, creates the consolidated playlists
+    directly from liked songs data (robust logic).
     """
     log("\n--- Consolidating Old Monthly Playlists ---")
     
     current_year = datetime.now().year
-    cutoff_year = current_year - 1  # Keep only the last 2 years as monthly (current year and previous year)
+    cutoff_year = current_year  # Keep only the current year as monthly
     
     # Get all existing playlists
     existing = get_existing_playlists(sp)
@@ -693,69 +604,165 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
                             monthly_playlists[year].append((playlist_name, playlist_id))
                     break
     
-    if not monthly_playlists:
-        log("  No old monthly playlists to consolidate")
+    # Load liked songs data to get tracks by year (for robust consolidation)
+    year_to_tracks = {}
+    try:
+        playlist_tracks_path = DATA_DIR / "playlist_tracks.parquet"
+        if playlist_tracks_path.exists():
+            library = pd.read_parquet(playlist_tracks_path)
+            liked = library[library["playlist_id"].astype(str) == LIKED_SONGS_PLAYLIST_ID].copy()
+            
+            if not liked.empty:
+                # Parse timestamps
+                added_col = None
+                for col in ["added_at", "playlist_added_at", "track_added_at"]:
+                    if col in liked.columns:
+                        added_col = col
+                        break
+                
+                if added_col:
+                    liked[added_col] = pd.to_datetime(liked[added_col], errors="coerce", utc=True)
+                    liked["year"] = liked[added_col].dt.year
+                    
+                    # Handle both track_uri and track_id columns
+                    if "track_uri" in liked.columns:
+                        liked["_uri"] = liked["track_uri"]
+                    else:
+                        liked["_uri"] = liked["track_id"].map(_to_uri)
+                    
+                    # Build year -> tracks mapping
+                    for year, group in liked.groupby("year"):
+                        if year < cutoff_year:
+                            uris = group["_uri"].dropna().tolist()
+                            # Deduplicate while preserving order
+                            seen = set()
+                            unique = [u for u in uris if not (u in seen or seen.add(u))]
+                            year_to_tracks[year] = unique
+    except Exception as e:
+        log(f"  ⚠️  Could not load liked songs data: {e}")
+    
+    # Get all years that need consolidation (from playlists or liked songs data)
+    all_years = set(monthly_playlists.keys()) | set(year_to_tracks.keys())
+    
+    if not all_years:
+        log("  No old years to consolidate")
         return
     
-    log(f"  Found monthly playlists from {len(monthly_playlists)} year(s) to consolidate")
+    log(f"  Found {len(all_years)} year(s) to consolidate")
     
-    # For each old year, consolidate monthly playlists into yearly
-    for year in sorted(monthly_playlists.keys()):
-        year_playlist_name = format_yearly_playlist_name(str(year))
-        monthly_list = monthly_playlists[year]
+    # Load genre data for genre splits
+    track_to_genre = {}
+    try:
+        track_artists = pd.read_parquet(DATA_DIR / "track_artists.parquet")
+        artists = pd.read_parquet(DATA_DIR / "artists.parquet")
+        artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
         
-        log(f"  Consolidating {len(monthly_list)} playlists from {year} into {year_playlist_name}")
+        # Build track -> genre mapping for all tracks we might need
+        all_track_uris = set()
+        for year in all_years:
+            if year in year_to_tracks:
+                all_track_uris.update(year_to_tracks[year])
+            if year in monthly_playlists:
+                for _, pid in monthly_playlists[year]:
+                    all_track_uris.update(get_playlist_tracks(sp, pid))
         
-        # Collect all tracks from all monthly playlists for this year
+        track_ids = {u.split(":")[-1] for u in all_track_uris if u.startswith("spotify:track:")}
+        
+        for _, row in track_artists[track_artists["track_id"].isin(track_ids)].iterrows():
+            tid = row["track_id"]
+            uri = f"spotify:track:{tid}"
+            
+            if uri in track_to_genre:
+                continue
+            
+            artist_genres = _parse_genres(artist_genres_map.get(row["artist_id"], []))
+            track_to_genre[uri] = get_split_genre(artist_genres)
+    except Exception as e:
+        log(f"  ⚠️  Could not load genre data: {e}")
+        log(f"  Will create main playlists only (no genre splits)")
+    
+    # For each old year, consolidate into 4 playlists
+    for year in sorted(all_years):
+        year_short = str(year)[2:] if len(str(year)) == 4 else str(year)
+        
+        # Collect all tracks for this year
         all_tracks = set()
-        for monthly_name, monthly_id in monthly_list:
-            tracks = get_playlist_tracks(sp, monthly_id)
-            all_tracks.update(tracks)
-            log(f"    - {monthly_name}: {len(tracks)} tracks")
+        
+        # First, try to get tracks from existing monthly playlists
+        if year in monthly_playlists:
+            for monthly_name, monthly_id in monthly_playlists[year]:
+                tracks = get_playlist_tracks(sp, monthly_id)
+                all_tracks.update(tracks)
+                log(f"    - {monthly_name}: {len(tracks)} tracks")
+        
+        # If no tracks from playlists, or to ensure completeness, use liked songs data
+        if year in year_to_tracks:
+            all_tracks.update(year_to_tracks[year])
+            if year not in monthly_playlists:
+                log(f"    - Using liked songs data: {len(year_to_tracks[year])} tracks")
         
         if not all_tracks:
-            log(f"    ⚠️  No tracks found, skipping {year_playlist_name}")
+            log(f"    ⚠️  No tracks found for {year}, skipping")
             continue
         
         all_tracks_list = list(all_tracks)
         
-        # Create or update yearly playlist
-        if year_playlist_name in existing:
-            # Update existing yearly playlist
-            yearly_id = existing[year_playlist_name]
-            already = get_playlist_tracks(sp, yearly_id)
-            to_add = [u for u in all_tracks_list if u not in already]
-            
-            if to_add:
-                for chunk in _chunked(to_add, 50):
-                    api_call(sp.playlist_add_items, yearly_id, chunk)
-                log(f"  {year_playlist_name}: +{len(to_add)} tracks (total: {len(all_tracks_list)})")
+        # Create 4 playlists: main + 3 genre splits
+        main_playlist_name = format_yearly_playlist_name(str(year))
+        playlist_configs = [
+            (main_playlist_name, "All tracks", None),
+            (f"{OWNER_NAME}{PREFIX}HipHop{year_short}", "Hip Hop tracks", "HipHop"),
+            (f"{OWNER_NAME}{PREFIX}Dance{year_short}", "Dance tracks", "Dance"),
+            (f"{OWNER_NAME}{PREFIX}Other{year_short}", "Other tracks", "Other"),
+        ]
+        
+        for playlist_name, description, genre_filter in playlist_configs:
+            # Filter tracks by genre if needed
+            if genre_filter:
+                filtered_tracks = [u for u in all_tracks_list if track_to_genre.get(u) == genre_filter]
             else:
-                log(f"  {year_playlist_name}: already up to date ({len(all_tracks_list)} tracks)")
-        else:
-            # Create new yearly playlist
-            pl = api_call(
-                sp.user_playlist_create,
-                user_id,
-                year_playlist_name,
-                public=False,
-                description=f"Liked songs from {year} (consolidated from monthly playlists)",
-            )
-            yearly_id = pl["id"]
+                filtered_tracks = all_tracks_list
             
-            for chunk in _chunked(all_tracks_list, 50):
-                api_call(sp.playlist_add_items, yearly_id, chunk)
-            log(f"  {year_playlist_name}: created with {len(all_tracks_list)} tracks")
+            if not filtered_tracks:
+                log(f"    ⚠️  No {genre_filter or 'all'} tracks for {year}, skipping {playlist_name}")
+                continue
+            
+            # Create or update playlist
+            if playlist_name in existing:
+                pid = existing[playlist_name]
+                already = get_playlist_tracks(sp, pid)
+                to_add = [u for u in filtered_tracks if u not in already]
+                
+                if to_add:
+                    for chunk in _chunked(to_add, 50):
+                        api_call(sp.playlist_add_items, pid, chunk)
+                    log(f"  {playlist_name}: +{len(to_add)} tracks (total: {len(filtered_tracks)})")
+                else:
+                    log(f"  {playlist_name}: already up to date ({len(filtered_tracks)} tracks)")
+            else:
+                pl = api_call(
+                    sp.user_playlist_create,
+                    user_id,
+                    playlist_name,
+                    public=False,
+                    description=f"{description} from {year}",
+                )
+                pid = pl["id"]
+                
+                for chunk in _chunked(filtered_tracks, 50):
+                    api_call(sp.playlist_add_items, pid, chunk)
+                log(f"  {playlist_name}: created with {len(filtered_tracks)} tracks")
         
-        # Delete old monthly playlists
-        for monthly_name, monthly_id in monthly_list:
-            try:
-                api_call(sp.user_playlist_unfollow, user_id, monthly_id)
-                log(f"    ✓ Deleted {monthly_name}")
-            except Exception as e:
-                log(f"    ⚠️  Failed to delete {monthly_name}: {e}")
+        # Delete old monthly playlists if they existed
+        if year in monthly_playlists:
+            for monthly_name, monthly_id in monthly_playlists[year]:
+                try:
+                    api_call(sp.user_playlist_unfollow, user_id, monthly_id)
+                    log(f"    ✓ Deleted {monthly_name}")
+                except Exception as e:
+                    log(f"    ⚠️  Failed to delete {monthly_name}: {e}")
         
-        log(f"  ✅ Consolidated {year} ({len(monthly_list)} playlists → 1 yearly playlist)")
+        log(f"  ✅ Consolidated {year} into 4 playlists")
 
 
 def delete_old_monthly_playlists(sp: spotipy.Spotify) -> None:
@@ -767,7 +774,7 @@ def delete_old_monthly_playlists(sp: spotipy.Spotify) -> None:
     log("\n--- Deleting Old Genre-Split Monthly Playlists ---")
     
     current_year = datetime.now().year
-    cutoff_year = current_year - 1  # Keep only the last 2 years as monthly (current year and previous year)
+    cutoff_year = current_year  # Keep only the current year as monthly
     
     # Get all existing playlists
     existing = get_existing_playlists(sp)
@@ -965,6 +972,16 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
 # ============================================================================
 
 def main():
+    # Load environment variables from .env file if available
+    if DOTENV_AVAILABLE:
+        env_path = PROJECT_ROOT / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+    
+    # Clear log buffer at start
+    global _log_buffer
+    _log_buffer = []
+    
     parser = argparse.ArgumentParser(
         description="Sync Spotify library and update playlists",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -994,6 +1011,10 @@ Examples:
     log("Spotify Sync & Playlist Update")
     log("=" * 60)
     
+    success = False
+    error = None
+    summary = {}
+    
     # Authenticate
     try:
         sp = get_spotify_client()
@@ -1001,23 +1022,16 @@ Examples:
         log(f"Authenticated as: {user['display_name']} ({user['id']})")
     except Exception as e:
         log(f"ERROR: Authentication failed: {e}")
+        error = e
+        _send_email_notification(False, error=error)
         sys.exit(1)
     
     try:
         # Data sync phase
         if not args.skip_sync:
             # Full library sync using spotim8 (includes liked songs and artists)
-            spotim8_synced = sync_full_library()
-            
-            # Only use fallback sync if spotim8 is not available
-            if not spotim8_synced:
-                log("Using fallback sync (spotim8 not available)")
-                liked_tracks = sync_liked_songs(sp)
-                
-                if liked_tracks:
-                    # Sync artists for genre info
-                    track_ids = [t["track_id"] for t in liked_tracks]
-                    sync_artists(sp, track_ids)
+            sync_success = sync_full_library()
+            summary["sync_completed"] = "Yes" if sync_success else "No"
         
         # Playlist update phase
         if not args.sync_only:
@@ -1031,6 +1045,8 @@ Examples:
             month_to_tracks = update_monthly_playlists(
                 sp, current_month_only=not args.all_months
             )
+            if month_to_tracks:
+                summary["months_processed"] = len(month_to_tracks)
             
             # Update genre-split playlists
             if month_to_tracks:
@@ -1042,12 +1058,41 @@ Examples:
         log("\n" + "=" * 60)
         log("✅ Complete!")
         log("=" * 60)
+        success = True
         
     except Exception as e:
         log(f"ERROR: {e}")
         import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        error_trace = traceback.format_exc()
+        log(error_trace)
+        error = e
+        success = False
+    
+    finally:
+        # Send email notification
+        _send_email_notification(success, summary=summary, error=error)
+        
+        if not success:
+            sys.exit(1)
+
+
+def _send_email_notification(success: bool, summary: dict = None, error: Exception = None):
+    """Helper to send email notification with captured logs."""
+    if not EMAIL_AVAILABLE:
+        return
+    
+    log_output = "\n".join(_log_buffer)
+    
+    try:
+        send_email_notification(
+            success=success,
+            log_output=log_output,
+            summary=summary or {},
+            error=error
+        )
+    except Exception as e:
+        # Don't fail the sync if email fails
+        print(f"⚠️  Email notification error (non-fatal): {e}")
 
 
 if __name__ == "__main__":

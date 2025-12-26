@@ -1,0 +1,67 @@
+playlist_name,track_count,action,reason,tracks_lost,alternative
+AJFindsDec24,1,delete,"Exact duplicate of ""OtherFindsDec24""",0,OtherFindsDec24
+AJFindsOct24,3,delete,"Exact duplicate of ""OtherFindsOct24""",0,OtherFindsOct24
+Pepper 🫑 ,3,delete,"All 3 tracks are in ""AJFinds23"" (1233 tracks)",0,AJFinds23
+DanceFindsApr24,1,delete,"All 1 tracks are in ""AJamPop"" (356 tracks)",0,AJamPop
+OtherFindsApr24,1,delete,"All 1 tracks are in ""AJamR&B/Soul"" (479 tracks)",0,AJamR&B/Soul
+DanceFindsNov25,19,delete,"All 19 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsOct25,1,delete,"All 1 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsSep25,24,delete,"All 24 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsAug25,52,delete,"All 52 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsJul25,36,delete,"All 36 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsJun25,18,delete,"All 18 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsMay25,20,delete,"All 20 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsApr25,19,delete,"All 19 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsMar25,3,delete,"All 3 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsSep24,2,delete,"All 2 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsAug24,4,delete,"All 4 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsJul24,2,delete,"All 2 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsJun24,7,delete,"All 7 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsMay24,7,delete,"All 7 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsMar24,1,delete,"All 1 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsJan24,3,delete,"All 3 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+DanceFindsDec25,27,delete,"All 27 tracks are in ""AJamElectronic"" (481 tracks)",0,AJamElectronic
+HipHopFindsNov25,9,delete,"All 9 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsOct25,17,delete,"All 17 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsSep25,13,delete,"All 13 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsAug25,34,delete,"All 34 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsJul25,19,delete,"All 19 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsJun25,30,delete,"All 30 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsMay25,13,delete,"All 13 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsApr25,13,delete,"All 13 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsMar25,6,delete,"All 6 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsFeb25,10,delete,"All 10 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsJan25,4,delete,"All 4 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsSep24,6,delete,"All 6 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsAug24,11,delete,"All 11 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsJul24,6,delete,"All 6 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsJun24,59,delete,"All 59 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsMay24,27,delete,"All 27 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsFeb24,30,delete,"All 30 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsJan24,6,delete,"All 6 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+HipHopFindsDec25,22,delete,"All 22 tracks are in ""AJamHip-Hop"" (1557 tracks)",0,AJamHip-Hop
+OtherFindsNov25,200,delete,"All 200 tracks are in ""AJFindsNov25"" (228 tracks)",0,AJFindsNov25
+OtherFindsOct25,71,delete,"All 71 tracks are in ""AJFindsOct25"" (89 tracks)",0,AJFindsOct25
+OtherFindsSep25,32,delete,"All 32 tracks are in ""AJFindsSep25"" (69 tracks)",0,AJFindsSep25
+OtherFindsAug25,67,delete,"All 67 tracks are in ""AJFindsAug25"" (153 tracks)",0,AJFindsAug25
+OtherFindsJul25,35,delete,"All 35 tracks are in ""AJFindsJul25"" (90 tracks)",0,AJFindsJul25
+OtherFindsJun25,30,delete,"All 30 tracks are in ""AJFindsJun25"" (78 tracks)",0,AJFindsJun25
+OtherFindsMay25,48,delete,"All 48 tracks are in ""AJFindsMay25"" (81 tracks)",0,AJFindsMay25
+OtherFindsApr25,40,delete,"All 40 tracks are in ""AJFindsApr25"" (72 tracks)",0,AJFindsApr25
+OtherFindsMar25,14,delete,"All 14 tracks are in ""AJFindsMar25"" (23 tracks)",0,AJFindsMar25
+OtherFindsFeb25,3,delete,"All 3 tracks are in ""AJFindsFeb25"" (13 tracks)",0,AJFindsFeb25
+OtherFindsJan25,7,delete,"All 7 tracks are in ""AJFindsJan25"" (11 tracks)",0,AJFindsJan25
+OtherFindsDec24,1,delete,"All 1 tracks are in ""Feb25"" (109 tracks)",0,Feb25
+OtherFindsSep24,28,delete,"All 28 tracks are in ""AJFindsSep24"" (36 tracks)",0,AJFindsSep24
+OtherFindsAug24,26,delete,"All 26 tracks are in ""AJFindsAug24"" (41 tracks)",0,AJFindsAug24
+OtherFindsJul24,25,delete,"All 25 tracks are in ""AJFindsJul24"" (33 tracks)",0,AJFindsJul24
+OtherFindsJun24,47,delete,"All 47 tracks are in ""AJFindsJun24"" (113 tracks)",0,AJFindsJun24
+OtherFindsMay24,41,delete,"All 41 tracks are in ""AJFindsMay24"" (75 tracks)",0,AJFindsMay24
+OtherFindsMar24,5,delete,"All 5 tracks are in ""AJFindsMar24"" (6 tracks)",0,AJFindsMar24
+OtherFindsFeb24,48,delete,"All 48 tracks are in ""AJFindsFeb24"" (88 tracks)",0,AJFindsFeb24
+DanceFindsFeb24,10,delete,"All 10 tracks are in ""AJFindsFeb24"" (88 tracks)",0,AJFindsFeb24
+OtherFindsJan24,27,delete,"All 27 tracks are in ""AJFindsJan24"" (36 tracks)",0,AJFindsJan24
+OtherFindsDec25,32,delete,"All 32 tracks are in ""AJFindsDec25"" (81 tracks)",0,AJFindsDec25
+Trapsoul,11,delete,"All 11 tracks are in ""Chill trap"" (517 tracks)",0,Chill trap
+Trance ,8,delete,"All 8 tracks are in ""Tekky "" (284 tracks)",0,Tekky 
+March’24,13,delete,"All 13 tracks are in ""SandTrap 🏝️🇹🇭"" (982 tracks)",0,SandTrap 🏝️🇹🇭

@@ -80,3 +80,17 @@ logs/
 .env
 .env.local
 .env.*.local
+
+# ----- iOS App Projects -----
+# Ignore Xcode projects and build artifacts
+apps/ios/Spotim8app/
+ios_app/
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserdata/
+DerivedData/
+build/
+*.app
+*.ipa
+*.dSYM.zip
+*.dSYM
