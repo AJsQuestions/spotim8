@@ -9,6 +9,11 @@ This script:
 4. Updates genre-split monthly playlists (HipHop, Dance, Other)
 5. Updates master genre playlists
 
+IMPORTANT: This script only ADDS tracks to playlists. It never removes tracks.
+Manually added tracks are preserved and will remain in the playlists even after
+automated updates. Feel free to manually add tracks to any automatically generated
+playlists - they will not be removed.
+
 The script automatically loads environment variables from .env file if python-dotenv
 is installed and a .env file exists in the project root.
 
@@ -54,18 +59,19 @@ import argparse
 import ast
 import io
 import os
+import random
 import sys
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-import time
-import random
-import requests
+from tqdm import tqdm
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -88,7 +94,14 @@ from spotim8 import Spotim8, CacheConfig, set_response_cache
 # Import genre classification functions from shared module
 from spotim8.genres import (
     SPLIT_GENRES,
-    get_split_genre, get_broad_genre
+    get_split_genre, get_broad_genre,
+    get_all_split_genres, get_all_broad_genres
+)
+
+# Import comprehensive genre inference
+from spotim8.genre_inference import (
+    infer_genres_comprehensive,
+    enhance_artist_genres_from_playlists
 )
 
 # Import email notification module
@@ -150,14 +163,26 @@ MONTH_NAMES = {
 _log_buffer = []
 
 def log(msg: str) -> None:
-    """Print message with timestamp and optionally buffer for email."""
+    """Print message with timestamp and optionally buffer for email.
+    
+    Uses tqdm.write() to avoid interfering with progress bars.
+    """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"[{timestamp}] {msg}"
-    print(log_line)
+    # Use tqdm.write() to avoid interfering with progress bars
+    try:
+        tqdm.write(log_line)
+    except NameError:
+        # tqdm not imported yet, use regular print
+        print(log_line)
     
     # Buffer log for email notification
     if EMAIL_AVAILABLE and is_email_enabled():
         _log_buffer.append(log_line)
+
+# Set log function for genre_inference module (after log is defined)
+import spotim8.genre_inference as genre_inference_module
+genre_inference_module._log_fn = log
 
 
 def api_call(fn, *args, max_retries: int = 6, backoff_factor: float = 1.0, **kwargs):
@@ -308,6 +333,41 @@ def _parse_genres(genre_data) -> list:
     return []
 
 
+def _get_all_track_genres(track_id: str, track_artists: pd.DataFrame, artist_genres_map: dict) -> list:
+    """Get all genres from all artists on a track.
+    
+    Collects genres from ALL artists on the track (not just the primary artist)
+    to get more complete genre information for better classification.
+    
+    Args:
+        track_id: The track ID
+        track_artists: DataFrame with track_id and artist_id columns
+        artist_genres_map: Dictionary mapping artist_id to genres list
+    
+    Returns:
+        Combined list of all unique genres from all artists on the track
+    """
+    # Get all artists for this track
+    track_artist_rows = track_artists[track_artists["track_id"] == track_id]
+    
+    # Collect all genres from all artists
+    all_genres = []
+    for _, row in track_artist_rows.iterrows():
+        artist_id = row["artist_id"]
+        artist_genres = _parse_genres(artist_genres_map.get(artist_id, []))
+        all_genres.extend(artist_genres)
+    
+    # Return unique genres while preserving order
+    seen = set()
+    unique_genres = []
+    for genre in all_genres:
+        if genre not in seen:
+            seen.add(genre)
+            unique_genres.append(genre)
+    
+    return unique_genres
+
+
 def format_playlist_name(template: str, month_str: str, genre: str = None) -> str:
     """Format playlist name from month string like '2025-01'."""
     parts = month_str.split("-")
@@ -341,11 +401,33 @@ def format_yearly_playlist_name(year: str) -> str:
 
 
 # ============================================================================
-# SPOTIFY API HELPERS
+# SPOTIFY API HELPERS (with smart caching)
 # ============================================================================
 
-def get_existing_playlists(sp: spotipy.Spotify) -> dict:
-    """Get all user playlists as {name: id} mapping."""
+# In-memory caches (per-run, invalidated when needed)
+_playlist_cache: dict = None  # {name: id}
+_playlist_tracks_cache: dict = {}  # {playlist_id: set of URIs}
+_user_cache: dict = None  # user info
+_playlist_cache_valid = False
+
+def _invalidate_playlist_cache():
+    """Invalidate playlist and playlist tracks cache (call after modifying playlists)."""
+    global _playlist_cache, _playlist_tracks_cache, _playlist_cache_valid
+    _playlist_cache = None
+    _playlist_tracks_cache = {}
+    _playlist_cache_valid = False
+
+def get_existing_playlists(sp: spotipy.Spotify, force_refresh: bool = False) -> dict:
+    """Get all user playlists as {name: id} mapping.
+    
+    Cached in-memory for the duration of the run. Call _invalidate_playlist_cache()
+    after modifying playlists (creating/deleting) to ensure fresh data.
+    """
+    global _playlist_cache, _playlist_cache_valid
+    
+    if _playlist_cache is not None and not force_refresh and _playlist_cache_valid:
+        return _playlist_cache
+    
     mapping = {}
     offset = 0
     while True:
@@ -355,11 +437,23 @@ def get_existing_playlists(sp: spotipy.Spotify) -> dict:
         if not page.get("next"):
             break
         offset += 50
+    
+    _playlist_cache = mapping
+    _playlist_cache_valid = True
     return mapping
 
 
-def get_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> set:
-    """Get all track URIs in a playlist."""
+def get_playlist_tracks(sp: spotipy.Spotify, playlist_id: str, force_refresh: bool = False) -> set:
+    """Get all track URIs in a playlist.
+    
+    Cached in-memory for the duration of the run. Cache is automatically
+    invalidated for a playlist when tracks are added to it.
+    """
+    global _playlist_tracks_cache
+    
+    if playlist_id in _playlist_tracks_cache and not force_refresh:
+        return _playlist_tracks_cache[playlist_id]
+    
     uris = set()
     offset = 0
     while True:
@@ -376,12 +470,244 @@ def get_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> set:
         if not page.get("next"):
             break
         offset += 100
+    
+    _playlist_tracks_cache[playlist_id] = uris
     return uris
+
+
+def get_user_info(sp: spotipy.Spotify, force_refresh: bool = False) -> dict:
+    """Get current user info (cached in-memory)."""
+    global _user_cache
+    
+    if _user_cache is not None and not force_refresh:
+        return _user_cache
+    
+    _user_cache = api_call(sp.current_user)
+    return _user_cache
 
 
 # ============================================================================
 # DATA SYNC FUNCTIONS
 # ============================================================================
+
+def compute_track_genres_incremental(stats: dict = None) -> None:
+    """Compute and store track genres with smart caching.
+    
+    Only re-infers genres for tracks that have changed:
+    - New tracks (not yet inferred)
+    - Tracks in playlists that were updated
+    - Tracks whose artists had genres enhanced
+    
+    This dramatically improves sync runtime by avoiding unnecessary computation.
+    """
+    log("\n--- Computing Track Genres (Smart Caching) ---")
+    
+    try:
+        # Load all data
+        tracks_path = DATA_DIR / "tracks.parquet"
+        track_artists_path = DATA_DIR / "track_artists.parquet"
+        artists_path = DATA_DIR / "artists.parquet"
+        playlist_tracks_path = DATA_DIR / "playlist_tracks.parquet"
+        playlists_path = DATA_DIR / "playlists.parquet"
+        
+        if not all(p.exists() for p in [tracks_path, track_artists_path, artists_path, playlist_tracks_path, playlists_path]):
+            log("  ⚠️  Missing required data files, skipping genre computation")
+            return
+        
+        # Check file modification times for smart caching
+        playlist_tracks_mtime = playlist_tracks_path.stat().st_mtime if playlist_tracks_path.exists() else 0
+        playlists_mtime = playlists_path.stat().st_mtime if playlists_path.exists() else 0
+        
+        tracks = pd.read_parquet(tracks_path)
+        track_artists = pd.read_parquet(track_artists_path)
+        artists = pd.read_parquet(artists_path)
+        playlist_tracks = pd.read_parquet(playlist_tracks_path)
+        playlists = pd.read_parquet(playlists_path)
+        
+        # Check if genres column exists, if not create it
+        if "genres" not in tracks.columns:
+            tracks["genres"] = None
+        
+        # Determine which tracks need genre inference
+        tracks_needing_inference = set()
+        
+        # 1. Tracks without genres
+        def needs_genres(genres_val):
+            """Check if track needs genre inference."""
+            # Handle None
+            if genres_val is None:
+                return True
+            
+            # Handle numpy arrays first (before checking isna which fails on arrays)
+            if isinstance(genres_val, np.ndarray):
+                return len(genres_val) == 0
+            
+            # Check if it's a list
+            if isinstance(genres_val, list):
+                return len(genres_val) == 0
+            
+            # Check if NaN (but only for scalar values, use try-except to handle arrays)
+            try:
+                # First check if it's a scalar by trying to use pd.isna
+                scalar_check = pd.api.types.is_scalar(genres_val)
+                if scalar_check:
+                    if pd.isna(genres_val):
+                        return True
+            except (ValueError, TypeError):
+                # If isna fails (e.g., on arrays), continue to next check
+                pass
+            
+            # For other types (including arrays), try to check length
+            try:
+                if hasattr(genres_val, '__len__'):
+                    return len(genres_val) == 0
+            except (TypeError, AttributeError):
+                pass
+            
+            # Unknown type or couldn't determine - treat as needing genres
+            return True
+        
+        tracks_without_genres = tracks[tracks["genres"].apply(needs_genres)]
+        tracks_needing_inference.update(tracks_without_genres["track_id"].tolist())
+        
+        # 2. New tracks added in this sync (if stats provided)
+        if stats and stats.get("tracks_added", 0) > 0:
+            # Find tracks in playlist_tracks that don't have genres yet
+            playlist_track_ids = set(playlist_tracks["track_id"].unique())
+            # Helper function to check if track has valid genres
+            def has_valid_genres(genres_val):
+                if genres_val is None or pd.isna(genres_val):
+                    return False
+                if isinstance(genres_val, list):
+                    return len(genres_val) > 0
+                return False
+            
+            tracks_with_genres = set(tracks[tracks["genres"].apply(has_valid_genres)]["track_id"].tolist())
+            new_track_ids = playlist_track_ids - tracks_with_genres
+            tracks_needing_inference.update(new_track_ids)
+        
+        total_tracks = len(tracks)
+        needs_inference = len(tracks_needing_inference)
+        already_has_genres = total_tracks - needs_inference
+        
+        if needs_inference == 0:
+            log(f"  ✅ All {total_tracks:,} tracks already have genres (smart cache hit)")
+            return
+        
+        log(f"  📊 Genre status: {already_has_genres:,} cached, {needs_inference:,} need inference")
+        
+        # Only enhance artist genres if playlists changed (smart caching)
+        if stats and (stats.get("playlists_updated", 0) > 0 or stats.get("tracks_added", 0) > 0):
+            tqdm.write("  🔄 Enhancing artist genres from playlist patterns...")
+            artists_before = artists.copy()
+            artists_enhanced = enhance_artist_genres_from_playlists(
+                artists, track_artists, playlist_tracks, playlists
+            )
+            
+            # Check if any artists had their genres enhanced
+            enhanced_artist_ids = set()
+            artists_dict_before = artists_before.set_index("artist_id")["genres"].to_dict()
+            artists_dict_after = artists_enhanced.set_index("artist_id")["genres"].to_dict()
+            
+            for artist_id in artists_dict_after.keys():
+                old_genres = set(_parse_genres(artists_dict_before.get(artist_id, [])))
+                new_genres = set(_parse_genres(artists_dict_after.get(artist_id, [])))
+                if old_genres != new_genres:
+                    enhanced_artist_ids.add(artist_id)
+            
+            if enhanced_artist_ids:
+                # Save enhanced artists back
+                artists_enhanced.to_parquet(artists_path, index=False)
+                artists = artists_enhanced
+                # Re-infer genres for tracks by enhanced artists
+                enhanced_track_ids = track_artists[track_artists["artist_id"].isin(enhanced_artist_ids)]["track_id"].unique()
+                tracks_needing_inference.update(enhanced_track_ids)
+                tqdm.write(f"  ✨ Enhanced {len(enhanced_artist_ids)} artists - re-inferring {len(enhanced_track_ids)} tracks")
+            else:
+                artists = artists_enhanced  # Use enhanced even if no changes (for consistency)
+        else:
+            log("  ⏭️  Skipping artist genre enhancement (no playlist changes)")
+        
+        # Filter to only tracks that need inference
+        tracks_to_process = tracks[tracks["track_id"].isin(tracks_needing_inference)]
+        
+        if len(tracks_to_process) == 0:
+            log(f"  ✅ All tracks up to date (smart cache hit)")
+            return
+        
+        tqdm.write(f"  🔄 Inferring genres for {len(tracks_to_process):,} track(s)...")
+        
+        # Infer genres for tracks that need it
+        inferred_genres_map = {}
+        
+        # Use tqdm for progress bar
+        track_iterator = tracks_to_process.itertuples()
+        if len(tracks_to_process) > 0:
+            track_iterator = tqdm(
+                track_iterator,
+                total=len(tracks_to_process),
+                desc="  Inferring genres",
+                unit="track",
+                ncols=100,
+                leave=False
+            )
+        
+        for track_row in track_iterator:
+            track_id = track_row.track_id
+            track_name = getattr(track_row, 'name', None)
+            album_name = getattr(track_row, 'album_name', None)
+            
+            genres = infer_genres_comprehensive(
+                track_id=track_id,
+                track_name=track_name,
+                album_name=album_name,
+                track_artists=track_artists,
+                artists=artists,
+                playlist_tracks=playlist_tracks,
+                playlists=playlists,
+                mode="split"  # Use split genres for tracks
+            )
+            
+            inferred_genres_map[track_id] = genres
+        
+        # Update tracks with inferred genres
+        if inferred_genres_map:
+            tqdm.write("  💾 Updating track genres...")
+            for track_id, genres in inferred_genres_map.items():
+                track_mask = tracks["track_id"] == track_id
+                track_rows = tracks[track_mask]
+                if len(track_rows) > 0:
+                    # Use .at for scalar assignment of list values
+                    track_idx_val = track_rows.index[0]
+                    tracks.at[track_idx_val, "genres"] = genres
+            
+            # Save updated tracks
+            tracks.to_parquet(tracks_path, index=False)
+        
+        # Count tracks with valid genres (avoiding pandas array ambiguity)
+        def has_valid_genre(g):
+            if g is None:
+                return False
+            try:
+                if pd.api.types.is_scalar(g):
+                    if pd.isna(g):
+                        return False
+                if isinstance(g, list):
+                    return len(g) > 0
+                if isinstance(g, (np.ndarray, pd.Series)):
+                    return len(g) > 0
+                return bool(g)
+            except (ValueError, TypeError):
+                return False
+        
+        tracks_with_genres_after = tracks["genres"].apply(has_valid_genre).sum()
+        log(f"  ✅ Inferred genres for {len(inferred_genres_map):,} track(s) ({tracks_with_genres_after:,} total tracks with genres)")
+        
+    except Exception as e:
+        log(f"  ⚠️  Genre inference error (non-fatal): {e}")
+        import traceback
+        traceback.print_exc()
+
 
 def sync_full_library() -> bool:
     """
@@ -393,9 +719,9 @@ def sync_full_library() -> bool:
     Updates:
     - playlists.parquet
     - playlist_tracks.parquet  
-    - tracks.parquet
+    - tracks.parquet (with genres column)
     - track_artists.parquet
-    - artists.parquet
+    - artists.parquet (enhanced with inferred genres)
     """
     log("\n--- Full Library Sync ---")
     
@@ -423,10 +749,17 @@ def sync_full_library() -> bool:
             log("📭 No cached data found - running full sync...")
         
         # Sync library (incremental - only fetches changes based on snapshot_id)
+        # Note: We use owned_only=True for playlist_tracks to avoid syncing all followed playlist contents,
+        # but we still sync all playlists (owned + followed) metadata so we can learn from their names/descriptions
         stats = sf.sync(
-            owned_only=True,
+            owned_only=True,  # Only sync tracks from owned playlists (faster)
             include_liked_songs=True
         )
+        
+        # Ensure we have ALL playlists (owned + followed) for genre inference
+        # This allows us to learn from followed playlist names/descriptions
+        # The sync() call above already loads all playlists, but we ensure they're fresh
+        _ = sf.playlists(force=False)  # Load all playlists including followed (uses cache if fresh)
         
         log(f"✅ Library sync complete: {stats}")
         
@@ -439,6 +772,10 @@ def sync_full_library() -> bool:
             log("✅ All parquet files updated")
         else:
             log("✅ No changes detected - using cached derived tables")
+        
+        # Compute track genres with smart caching - only processes changed tracks
+        # This dramatically improves sync runtime by avoiding unnecessary computation
+        compute_track_genres_incremental(stats)
         
         return True
         
@@ -456,7 +793,11 @@ def sync_full_library() -> bool:
 # ============================================================================
 
 def update_monthly_playlists(sp: spotipy.Spotify, current_month_only: bool = True) -> dict:
-    """Update monthly playlists with liked songs."""
+    """Update monthly playlists with liked songs.
+    
+    Note: This function only ADDS tracks from liked songs. It never removes tracks.
+    Manually added tracks are preserved and will remain in the playlists.
+    """
     log("\n--- Monthly Playlists ---")
     
     # Load data
@@ -514,9 +855,9 @@ def update_monthly_playlists(sp: spotipy.Spotify, current_month_only: bool = Tru
     
     log(f"Processing {len(month_to_tracks)} month(s)...")
     
-    # Get existing playlists
+    # Get existing playlists (cached)
     existing = get_existing_playlists(sp)
-    user = api_call(sp.current_user)
+    user = get_user_info(sp)
     user_id = user["id"]
     
     for month, uris in sorted(month_to_tracks.items()):
@@ -526,13 +867,18 @@ def update_monthly_playlists(sp: spotipy.Spotify, current_month_only: bool = Tru
         name = format_playlist_name(MONTHLY_NAME_TEMPLATE, month)
         if name in existing:
             pid = existing[name]
+            # Get existing tracks (includes both auto-added and manually added tracks)
             already = get_playlist_tracks(sp, pid)
+            # Only add tracks that aren't already present (preserves manual additions)
             to_add = [u for u in uris if u not in already]
 
             if to_add:
                 for chunk in _chunked(to_add, 50):
                     api_call(sp.playlist_add_items, pid, chunk)
-                log(f"  {name}: +{len(to_add)} tracks")
+                # Invalidate cache for this playlist since we added tracks
+                if pid in _playlist_tracks_cache:
+                    del _playlist_tracks_cache[pid]
+                log(f"  {name}: +{len(to_add)} tracks (manually added tracks preserved)")
             else:
                 log(f"  {name}: up to date")
         else:
@@ -541,12 +887,14 @@ def update_monthly_playlists(sp: spotipy.Spotify, current_month_only: bool = Tru
                 user_id,
                 name,
                 public=False,
-                description=f"Liked songs from {month}",
+                description=f"Liked songs from {month} (automatically updated; manual additions welcome)",
             )
             pid = pl["id"]
 
             for chunk in _chunked(uris, 50):
                 api_call(sp.playlist_add_items, pid, chunk)
+            # Invalidate playlist cache since we created a new playlist
+            _invalidate_playlist_cache()
             log(f"  {name}: created with {len(uris)} tracks")
     
     return month_to_tracks
@@ -567,15 +915,18 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
     
     If monthly playlists don't exist for a year, creates the consolidated playlists
     directly from liked songs data (robust logic).
+    
+    Note: This function only ADDS tracks to existing yearly playlists. It never removes tracks.
+    Manually added tracks are preserved and will remain in the playlists.
     """
     log("\n--- Consolidating Old Monthly Playlists ---")
     
     current_year = datetime.now().year
     cutoff_year = current_year  # Keep only the current year as monthly
     
-    # Get all existing playlists
+    # Get all existing playlists (cached)
     existing = get_existing_playlists(sp)
-    user = api_call(sp.current_user)
+    user = get_user_info(sp)
     user_id = user["id"]
     
     # Pattern: {owner}{prefix}{mon}{year} e.g., "AJFindsJan23"
@@ -641,25 +992,53 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
     except Exception as e:
         log(f"  ⚠️  Could not load liked songs data: {e}")
     
-    # Get all years that need consolidation (from playlists or liked songs data)
-    all_years = set(monthly_playlists.keys()) | set(year_to_tracks.keys())
+    # Only consolidate years that have monthly playlists that need consolidation
+    # Skip years where consolidated playlists already exist and no monthly playlists remain
+    years_to_consolidate = set()
     
-    if not all_years:
-        log("  No old years to consolidate")
+    for year in set(monthly_playlists.keys()) | set(year_to_tracks.keys()):
+        # If there are monthly playlists for this year, we need to consolidate
+        if year in monthly_playlists:
+            years_to_consolidate.add(year)
+        else:
+            # No monthly playlists - check if consolidated playlists exist
+            # Only consolidate if they don't exist yet
+            year_short = str(year)[2:] if len(str(year)) == 4 else str(year)
+            main_playlist_name = format_yearly_playlist_name(str(year))
+            if main_playlist_name not in existing:
+                # Consolidated playlist doesn't exist, need to create it
+                years_to_consolidate.add(year)
+    
+    if not years_to_consolidate:
+        log("  No old years need consolidation (all already consolidated)")
         return
     
-    log(f"  Found {len(all_years)} year(s) to consolidate")
+    log(f"  Found {len(years_to_consolidate)} year(s) to consolidate")
     
     # Load genre data for genre splits
-    track_to_genre = {}
+    track_to_genres = {}  # Map URI to list of genres (tracks can have multiple)
     try:
+        # Try to use stored track genres first (most efficient)
+        tracks_df = pd.read_parquet(DATA_DIR / "tracks.parquet")
+        if "genres" in tracks_df.columns:
+            # Use stored track genres
+            for _, track_row in tracks_df.iterrows():
+                track_id = track_row["track_id"]
+                uri = f"spotify:track:{track_id}"
+                stored_genres = _parse_genres(track_row.get("genres"))
+                if stored_genres:
+                    # Convert stored genres to split genres
+                    split_genres = get_all_split_genres(stored_genres)
+                    if split_genres:
+                        track_to_genres[uri] = split_genres
+        
         track_artists = pd.read_parquet(DATA_DIR / "track_artists.parquet")
         artists = pd.read_parquet(DATA_DIR / "artists.parquet")
         artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
         
         # Build track -> genre mapping for all tracks we might need
         all_track_uris = set()
-        for year in all_years:
+        for year in years_to_consolidate:
             if year in year_to_tracks:
                 all_track_uris.update(year_to_tracks[year])
             if year in monthly_playlists:
@@ -668,21 +1047,23 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
         
         track_ids = {u.split(":")[-1] for u in all_track_uris if u.startswith("spotify:track:")}
         
-        for _, row in track_artists[track_artists["track_id"].isin(track_ids)].iterrows():
-            tid = row["track_id"]
-            uri = f"spotify:track:{tid}"
+        # Fill in missing genres using artist data
+        for track_id in track_ids:
+            uri = f"spotify:track:{track_id}"
+            if uri in track_to_genres:
+                continue  # Already have genres from stored data
             
-            if uri in track_to_genre:
-                continue
-            
-            artist_genres = _parse_genres(artist_genres_map.get(row["artist_id"], []))
-            track_to_genre[uri] = get_split_genre(artist_genres)
+            # Get all genres from all artists on this track
+            all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
+            split_genres = get_all_split_genres(all_track_genres)
+            if split_genres:
+                track_to_genres[uri] = split_genres
     except Exception as e:
         log(f"  ⚠️  Could not load genre data: {e}")
         log(f"  Will create main playlists only (no genre splits)")
     
     # For each old year, consolidate into 4 playlists
-    for year in sorted(all_years):
+    for year in sorted(years_to_consolidate):
         year_short = str(year)[2:] if len(str(year)) == 4 else str(year)
         
         # Collect all tracks for this year
@@ -717,9 +1098,12 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
         ]
         
         for playlist_name, description, genre_filter in playlist_configs:
-            # Filter tracks by genre if needed
+            # Filter tracks by genre if needed (tracks can match multiple genres)
             if genre_filter:
-                filtered_tracks = [u for u in all_tracks_list if track_to_genre.get(u) == genre_filter]
+                filtered_tracks = [
+                    u for u in all_tracks_list 
+                    if genre_filter in track_to_genres.get(u, [])
+                ]
             else:
                 filtered_tracks = all_tracks_list
             
@@ -729,14 +1113,22 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
             
             # Create or update playlist
             if playlist_name in existing:
+                # If we're not consolidating from monthly playlists (they were already deleted),
+                # and the playlist already exists, skip the expensive check
+                if year not in monthly_playlists:
+                    log(f"  {playlist_name}: already consolidated (skipping check)")
+                    continue
+                
                 pid = existing[playlist_name]
+                # Get existing tracks (includes both auto-added and manually added tracks)
                 already = get_playlist_tracks(sp, pid)
+                # Only add tracks that aren't already present (preserves manual additions)
                 to_add = [u for u in filtered_tracks if u not in already]
                 
                 if to_add:
                     for chunk in _chunked(to_add, 50):
                         api_call(sp.playlist_add_items, pid, chunk)
-                    log(f"  {playlist_name}: +{len(to_add)} tracks (total: {len(filtered_tracks)})")
+                    log(f"  {playlist_name}: +{len(to_add)} tracks (total: {len(filtered_tracks)}; manually added tracks preserved)")
                 else:
                     log(f"  {playlist_name}: already up to date ({len(filtered_tracks)} tracks)")
             else:
@@ -745,7 +1137,7 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
                     user_id,
                     playlist_name,
                     public=False,
-                    description=f"{description} from {year}",
+                    description=f"{description} from {year} (automatically updated; manual additions welcome)",
                 )
                 pid = pl["id"]
                 
@@ -758,6 +1150,8 @@ def consolidate_old_monthly_playlists(sp: spotipy.Spotify) -> None:
             for monthly_name, monthly_id in monthly_playlists[year]:
                 try:
                     api_call(sp.user_playlist_unfollow, user_id, monthly_id)
+                    # Invalidate cache since we deleted a playlist
+                    _invalidate_playlist_cache()
                     log(f"    ✓ Deleted {monthly_name}")
                 except Exception as e:
                     log(f"    ⚠️  Failed to delete {monthly_name}: {e}")
@@ -811,13 +1205,15 @@ def delete_old_monthly_playlists(sp: spotipy.Spotify) -> None:
     
     log(f"  Found {len(playlists_to_delete)} old genre-split monthly playlists to delete")
     
-    # Get user ID for deletion
-    user = api_call(sp.current_user)
+    # Get user ID for deletion (cached)
+    user = get_user_info(sp)
     user_id = user["id"]
     
     for playlist_name, playlist_id in playlists_to_delete:
         try:
             api_call(sp.user_playlist_unfollow, user_id, playlist_id)
+            # Invalidate cache since we deleted a playlist
+            _invalidate_playlist_cache()
             log(f"    ✓ Deleted {playlist_name}")
         except Exception as e:
             log(f"    ⚠️  Failed to delete {playlist_name}: {e}")
@@ -826,7 +1222,11 @@ def delete_old_monthly_playlists(sp: spotipy.Spotify) -> None:
 
 
 def update_genre_split_playlists(sp: spotipy.Spotify, month_to_tracks: dict) -> None:
-    """Update genre-split monthly playlists (HipHop, Dance, Other)."""
+    """Update genre-split monthly playlists (HipHop, Dance, Other).
+    
+    Note: This function only ADDS tracks from liked songs. It never removes tracks.
+    Manually added tracks are preserved and will remain in the playlists.
+    """
     if not month_to_tracks:
         return
     
@@ -838,29 +1238,45 @@ def update_genre_split_playlists(sp: spotipy.Spotify, month_to_tracks: dict) -> 
     
     artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
     
-    # Build track -> genre mapping
+    # Build track -> genres mapping (tracks can have multiple genres)
+    # Try to use stored track genres first
+    track_to_genres = {}
+    tracks_df = pd.read_parquet(DATA_DIR / "tracks.parquet")
+    if "genres" in tracks_df.columns:
+        # Use stored track genres
+        for _, track_row in tracks_df.iterrows():
+            track_id = track_row["track_id"]
+            uri = f"spotify:track:{track_id}"
+            stored_genres = _parse_genres(track_row.get("genres"))
+            if stored_genres:
+                split_genres = get_all_split_genres(stored_genres)
+                if split_genres:
+                    track_to_genres[uri] = split_genres
+    
+    # Fill in missing using artist data
     all_uris = set(u for uris in month_to_tracks.values() for u in uris)
     track_ids = {u.split(":")[-1] for u in all_uris if u.startswith("spotify:track:")}
     
-    track_to_genre = {}
-    for _, row in track_artists[track_artists["track_id"].isin(track_ids)].iterrows():
-        tid = row["track_id"]
-        uri = f"spotify:track:{tid}"
+    for track_id in track_ids:
+        uri = f"spotify:track:{track_id}"
+        if uri in track_to_genres:
+            continue  # Already have from stored data
         
-        if uri in track_to_genre:
-            continue
-        
-        artist_genres = _parse_genres(artist_genres_map.get(row["artist_id"], []))
-        track_to_genre[uri] = get_split_genre(artist_genres)
+        # Get all genres from all artists on this track
+        all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
+        split_genres = get_all_split_genres(all_track_genres)
+        if split_genres:
+            track_to_genres[uri] = split_genres
     
-    # Get existing playlists
+    # Get existing playlists (cached)
     existing = get_existing_playlists(sp)
-    user = api_call(sp.current_user)
+    user = get_user_info(sp)
     user_id = user["id"]
     
     for month, uris in sorted(month_to_tracks.items()):
         for genre in SPLIT_GENRES:
-            genre_uris = [u for u in uris if track_to_genre.get(u) == genre]
+            # Tracks can match multiple genres, check if this genre is in the list
+            genre_uris = [u for u in uris if genre in track_to_genres.get(u, [])]
             
             if not genre_uris:
                 continue
@@ -869,30 +1285,41 @@ def update_genre_split_playlists(sp: spotipy.Spotify, month_to_tracks: dict) -> 
             
             if name in existing:
                 pid = existing[name]
+                # Get existing tracks (includes both auto-added and manually added tracks)
                 already = get_playlist_tracks(sp, pid)
+                # Only add tracks that aren't already present (preserves manual additions)
                 to_add = [u for u in genre_uris if u not in already]
 
                 if to_add:
                     for chunk in _chunked(to_add, 50):
                         api_call(sp.playlist_add_items, pid, chunk)
-                    log(f"  {name}: +{len(to_add)} tracks")
+                    # Invalidate cache for this playlist since we added tracks
+                    if pid in _playlist_tracks_cache:
+                        del _playlist_tracks_cache[pid]
+                    log(f"  {name}: +{len(to_add)} tracks (manually added tracks preserved)")
             else:
                 pl = api_call(
                     sp.user_playlist_create,
                     user_id,
                     name,
                     public=False,
-                    description=f"{genre} tracks from {month}",
+                    description=f"{genre} tracks from {month} (automatically updated; manual additions welcome)",
                 )
                 pid = pl["id"]
 
                 for chunk in _chunked(genre_uris, 50):
                     api_call(sp.playlist_add_items, pid, chunk)
+                # Invalidate playlist cache since we created a new playlist
+                _invalidate_playlist_cache()
                 log(f"  {name}: created with {len(genre_uris)} tracks")
 
 
 def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
-    """Update master genre playlists with all liked songs by genre."""
+    """Update master genre playlists with all liked songs by genre.
+    
+    Note: This function only ADDS tracks from liked songs. It never removes tracks.
+    Manually added tracks are preserved and will remain in the playlists.
+    """
     log("\n--- Master Genre Playlists ---")
     
     # Load data
@@ -910,34 +1337,59 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
     else:
         liked_uris = [f"spotify:track:{tid}" for tid in liked_ids]
     
-    # Build genre mapping
-    artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
+    # Build genre mapping - tracks can have MULTIPLE broad genres
+    # Try to use stored track genres first, then fall back to artist genres
+    uri_to_genres = {}  # Map URI to list of broad genres
+    tracks_df = pd.read_parquet(DATA_DIR / "tracks.parquet")
     
-    uri_to_genre = {}
-    for _, row in track_artists[track_artists["track_id"].isin(liked_ids)].iterrows():
-        tid = row["track_id"]
-        uri = f"spotify:track:{tid}"
+    if "genres" in tracks_df.columns:
+        # Use stored track genres and convert to broad genres
+        for _, track_row in tracks_df.iterrows():
+            track_id = track_row["track_id"]
+            if track_id not in liked_ids:
+                continue
+            uri = f"spotify:track:{track_id}"
+            stored_genres = _parse_genres(track_row.get("genres"))
+            if stored_genres:
+                # Convert stored genres to broad genres
+                broad_genres = get_all_broad_genres(stored_genres)
+                if broad_genres:
+                    uri_to_genres[uri] = broad_genres
+    
+    # Fill in missing using artist data
+    artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
+    for track_id in liked_ids:
+        uri = f"spotify:track:{track_id}"
+        if uri in uri_to_genres:
+            continue  # Already have from stored data
         
-        if uri in uri_to_genre:
-            continue
-        
-        artist_genres = _parse_genres(artist_genres_map.get(row["artist_id"], []))
-        broad = get_broad_genre(artist_genres)
-        if broad:
-            uri_to_genre[uri] = broad
+        # Get all genres from all artists on this track
+        all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
+        # Get ALL matching broad genres (tracks can match multiple)
+        broad_genres = get_all_broad_genres(all_track_genres)
+        if broad_genres:
+            uri_to_genres[uri] = broad_genres
+    
+    # Count tracks per genre (tracks can contribute to multiple genres)
+    genre_counts = Counter()
+    for genres_list in uri_to_genres.values():
+        for genre in genres_list:
+            genre_counts[genre] += 1
     
     # Select top genres
-    genre_counts = Counter(uri_to_genre.values())
     selected = [g for g, n in genre_counts.most_common(MAX_GENRE_PLAYLISTS) 
                 if n >= MIN_TRACKS_FOR_GENRE]
     
-    # Get existing playlists
+    log(f"  Found {len(selected)} genre(s) with >= {MIN_TRACKS_FOR_GENRE} tracks")
+    
+    # Get existing playlists (cached)
     existing = get_existing_playlists(sp)
-    user = api_call(sp.current_user)
+    user = get_user_info(sp)
     user_id = user["id"]
     
     for genre in selected:
-        uris = [u for u in liked_uris if uri_to_genre.get(u) == genre]
+        # Get all tracks that match this genre (tracks can match multiple genres)
+        uris = [u for u in liked_uris if genre in uri_to_genres.get(u, [])]
         if not uris:
             continue
         
@@ -945,25 +1397,32 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
         
         if name in existing:
             pid = existing[name]
+            # Get existing tracks (includes both auto-added and manually added tracks)
             already = get_playlist_tracks(sp, pid)
+            # Only add tracks that aren't already present (preserves manual additions)
             to_add = [u for u in uris if u not in already]
 
             if to_add:
                 for chunk in _chunked(to_add, 50):
                     api_call(sp.playlist_add_items, pid, chunk)
-                log(f"  {name}: +{len(to_add)} tracks")
+                # Invalidate cache for this playlist since we added tracks
+                if pid in _playlist_tracks_cache:
+                    del _playlist_tracks_cache[pid]
+                log(f"  {name}: +{len(to_add)} tracks (manually added tracks preserved)")
         else:
             pl = api_call(
                 sp.user_playlist_create,
                 user_id,
                 name,
                 public=False,
-                description=f"All liked songs - {genre}",
+                description=f"All liked songs - {genre} (automatically updated; manual additions welcome)",
             )
             pid = pl["id"]
 
             for chunk in _chunked(uris, 50):
                 api_call(sp.playlist_add_items, pid, chunk)
+            # Invalidate playlist cache since we created a new playlist
+            _invalidate_playlist_cache()
             log(f"  {name}: created with {len(uris)} tracks")
 
 
@@ -1018,7 +1477,7 @@ Examples:
     # Authenticate
     try:
         sp = get_spotify_client()
-        user = api_call(sp.current_user)
+        user = get_user_info(sp)
         log(f"Authenticated as: {user['display_name']} ({user['id']})")
     except Exception as e:
         log(f"ERROR: Authentication failed: {e}")

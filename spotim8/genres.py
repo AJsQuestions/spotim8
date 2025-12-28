@@ -5,7 +5,7 @@ This module contains comprehensive mappings of Spotify genre tags to broad categ
 Used by both the sync script and notebooks for consistent genre classification.
 """
 
-from typing import Optional
+from typing import Optional, List
 
 # Genre classification rules for split playlists (HipHop/Dance/Other)
 # Exhaustive list of Spotify genre tags
@@ -282,6 +282,65 @@ def get_broad_genre(genre_list: list) -> Optional[str]:
         if any(kw in combined for kw in keywords):
             return category
     return None
+
+
+def get_all_split_genres(genre_list: list, include_other: bool = True) -> List[str]:
+    """Map artist genres to ALL matching split genres (HipHop, Dance, Other).
+    
+    A track/artist can match multiple categories.
+    "Other" is assigned only if genres don't match HipHop or Dance.
+    
+    Args:
+        genre_list: List of genre strings from artist
+        include_other: If True, include "Other" if no HipHop/Dance matches; else return empty list
+    
+    Returns:
+        List of matching genres: Can be ["HipHop"], ["Dance"], ["HipHop", "Dance"], or ["Other"]
+    """
+    if not genre_list:
+        return ["Other"] if include_other else []
+    
+    combined = " ".join(str(g) for g in genre_list).lower()
+    matched = []
+    
+    # Check for HipHop and Dance matches (explicit categories)
+    for genre_name in ["HipHop", "Dance"]:
+        if genre_name in GENRE_SPLIT_RULES:
+            keywords = GENRE_SPLIT_RULES[genre_name]
+            if any(kw in combined for kw in keywords):
+                matched.append(genre_name)
+    
+    # Only add "Other" if we didn't match HipHop or Dance
+    if not matched and include_other:
+        matched.append("Other")
+    
+    return matched
+
+
+def get_all_broad_genres(genre_list: list) -> List[str]:
+    """Map artist genres to ALL matching broad categories.
+    
+    A track/artist can match multiple categories (e.g., both Hip-Hop and R&B/Soul).
+    
+    Args:
+        genre_list: List of genre strings from artist
+    
+    Returns:
+        List of matching broad genre categories
+    """
+    if not genre_list:
+        return []
+    
+    combined = " ".join(str(g) for g in genre_list).lower()
+    matched = []
+    seen = set()
+    
+    for keywords, category in GENRE_RULES:
+        if category not in seen and any(kw in combined for kw in keywords):
+            matched.append(category)
+            seen.add(category)
+    
+    return matched
 
 
 # All broad genre categories

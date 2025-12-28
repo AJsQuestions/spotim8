@@ -30,8 +30,13 @@ mkdir -p "$LOG_DIR"
 
 # Cron schedule: Run daily at 2am
 CRON_SCHEDULE="0 2 * * *"
-# Use wrapper that properly activates venv (macOS cron compatibility)
-CRON_COMMAND="cd $PROJECT_ROOT && /bin/bash -c 'source venv/bin/activate 2>/dev/null || source .venv/bin/activate 2>/dev/null; python $SYNC_SCRIPT' >> $LOG_DIR/sync.log 2>&1"
+# Find venv Python
+VENV_PYTHON="$PROJECT_ROOT/venv/bin/python"
+if [ ! -f "$VENV_PYTHON" ]; then
+    VENV_PYTHON="$PROJECT_ROOT/.venv/bin/python"
+fi
+# Use full path to venv Python for reliability (macOS cron compatibility)
+CRON_COMMAND="cd $PROJECT_ROOT && $VENV_PYTHON $SYNC_SCRIPT >> $LOG_DIR/sync.log 2>&1"
 
 # Create temporary file with new cron job
 TEMP_CRON=$(mktemp)

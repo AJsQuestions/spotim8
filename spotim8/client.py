@@ -462,6 +462,12 @@ class Spotim8:
         pt = self.playlist_tracks(force=force)
         ids = pd.unique(pt["track_id"]).tolist()
 
+        # Load existing tracks to preserve genres column if present
+        existing_df = self.catalog.load(key)
+        existing_genres = {}
+        if existing_df is not None and "genres" in existing_df.columns:
+            existing_genres = existing_df.set_index("track_id")["genres"].to_dict()
+
         rows = []
         iterator = list(chunks(ids, 50))
         if self.progress:
@@ -474,8 +480,9 @@ class Spotim8:
                     continue
                 album = t.get("album") or {}
                 ext = t.get("external_ids") or {}
+                track_id = t.get("id")
                 rows.append({
-                    "track_id": t.get("id"),
+                    "track_id": track_id,
                     "name": t.get("name"),
                     "duration_ms": t.get("duration_ms"),
                     "explicit": t.get("explicit"),
@@ -486,9 +493,14 @@ class Spotim8:
                     "track_number": t.get("track_number"),
                     "isrc": ext.get("isrc"),
                     "uri": t.get("uri"),
+                    # Preserve existing genres or initialize to None
+                    "genres": existing_genres.get(track_id, None),
                 })
 
         df = pd.DataFrame(rows).drop_duplicates("track_id")
+        # Ensure genres column exists (in case no existing data)
+        if "genres" not in df.columns:
+            df["genres"] = None
         return self.catalog.save(key, df)
 
     def track_artists(self, force: bool = False) -> pd.DataFrame:
