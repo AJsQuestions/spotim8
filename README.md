@@ -144,13 +144,13 @@ Notebook `04_liked_songs_monthly_playlists.ipynb` creates automated playlists:
 
 ```
 📅 Monthly Playlists:
-   {Owner}{Prefix}{Mon}{Year} → e.g., FindsDec25
+   {Owner}{Prefix}{Mon}{Year} → e.g., AJFindsDec25
 
 🎸 Genre-Split Monthly:
    {Genre}{Prefix}{Mon}{Year} → e.g., HipHopFindsDec25, DanceFindsDec25
 
 🎵 Master Genre Playlists:
-   {Owner}am{Genre} → e.g., amHip-Hop, amElectronic
+   {Owner}am{Genre} → e.g., amHip-Hop, AJamElectronic
 ```
 
 ---
