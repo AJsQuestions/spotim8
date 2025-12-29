@@ -183,13 +183,27 @@ Set up daily sync on Linux/Mac:
 ```bash
 # Easy setup (recommended):
 ./scripts/cron.sh
-
-# Or manually edit crontab:
-crontab -e
-# Add: 0 2 * * * cd /path/to/spotim8 && /path/to/venv/bin/python scripts/runner.py >> logs/sync.log 2>&1
 ```
 
 The cron job runs daily at 2:00 AM and logs to `logs/sync.log`.
+
+**Features:**
+- ✅ Automatic log rotation (keeps last 3 backups)
+- ✅ Prevents concurrent runs with lock file mechanism
+- ✅ Dependency verification before execution
+- ✅ Automatic cleanup on errors
+- ✅ macOS permission handling
+
+**Manual setup** (if needed):
+```bash
+crontab -e
+# Add: 0 2 * * * /bin/bash /path/to/spotim8/scripts/cron_wrapper.sh
+```
+
+**Test the wrapper manually:**
+```bash
+/bin/bash scripts/cron_wrapper.sh --skip-sync
+```
 
 ### Email Notifications
 

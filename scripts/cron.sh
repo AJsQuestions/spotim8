@@ -30,13 +30,15 @@ mkdir -p "$LOG_DIR"
 
 # Cron schedule: Run daily at 2am
 CRON_SCHEDULE="0 2 * * *"
-# Find venv Python
-VENV_PYTHON="$PROJECT_ROOT/venv/bin/python"
-if [ ! -f "$VENV_PYTHON" ]; then
-    VENV_PYTHON="$PROJECT_ROOT/.venv/bin/python"
+# Use the wrapper script which handles environment setup properly
+WRAPPER_SCRIPT="$PROJECT_ROOT/scripts/cron_wrapper.sh"
+if [ ! -f "$WRAPPER_SCRIPT" ]; then
+    echo "ERROR: Cron wrapper script not found at $WRAPPER_SCRIPT"
+    exit 1
 fi
-# Use full path to venv Python for reliability (macOS cron compatibility)
-CRON_COMMAND="cd $PROJECT_ROOT && $VENV_PYTHON $SYNC_SCRIPT >> $LOG_DIR/sync.log 2>&1"
+chmod +x "$WRAPPER_SCRIPT"
+# Use wrapper script which handles PATH and environment setup
+CRON_COMMAND="/bin/bash $WRAPPER_SCRIPT"
 
 # Create temporary file with new cron job
 TEMP_CRON=$(mktemp)
@@ -56,6 +58,7 @@ rm "$TEMP_CRON"
 echo "✅ Cron job installed successfully!"
 echo ""
 echo "Schedule: Daily at 2:00 AM"
+echo "Wrapper: $WRAPPER_SCRIPT"
 echo "Script: $SYNC_SCRIPT"
 echo "Logs: $LOG_DIR/sync.log"
 echo ""
@@ -63,8 +66,8 @@ echo "To view your crontab:"
 echo "  crontab -l"
 echo ""
 echo "To remove this cron job:"
-echo "  crontab -e  # Then delete the line with 'spotim8' or 'scripts/runner'"
+echo "  crontab -e  # Then delete the line with 'spotim8' or 'cron_wrapper'"
 echo ""
 echo "To test the sync script manually:"
-echo "  python $SYNC_SCRIPT"
+echo "  /bin/bash $WRAPPER_SCRIPT --skip-sync"
 

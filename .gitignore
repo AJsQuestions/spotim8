@@ -78,6 +78,7 @@ data/.artist_sync_done
 # ----- Logs -----
 *.log
 logs/
+logs/*.lock
 
 # ----- Environment Variables -----
 .env
