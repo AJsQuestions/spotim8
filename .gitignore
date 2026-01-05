@@ -40,6 +40,12 @@ ENV/
 *.sublime-project
 *.sublime-workspace
 
+# ----- Build Tools -----
+.vite/
+dist/
+build/
+*.egg-info/
+
 # ----- macOS -----
 .DS_Store
 *.DS_Store
@@ -55,14 +61,18 @@ Thumbs.db
 notebooks/.cache
 
 # ----- Data Files -----
-# Ignore parquet files (user-specific synced library data)
-# These are generated locally and shouldn't be committed
-data/*.parquet
-data/*.json
-# But allow specific data structure folders (user imports these)
-data/Spotify Account Data/
-data/Spotify Extended Streaming History/
-data/Spotify Technical Log Information/
+# Ignore ALL data files and folders (user-specific synced library data)
+# These are generated locally and contain personal information - NEVER commit
+# Ignore entire data directory and all contents
+data/
+# But allow a README if needed for documentation
+!data/README.md
+# Explicitly ignore all parquet files (user data)
+*.parquet
+# Explicitly ignore all JSON files in data/ (personal Spotify exports)
+data/**/*.json
+# Explicitly ignore all CSV files in data/ (analysis outputs)
+data/**/*.csv
 
 # Ignore local cache and metadata (regenerated on sync)
 data/.api_cache/
@@ -71,10 +81,6 @@ data/meta.json
 
 # User-specific analysis outputs
 data/playlist_consolidation_recommendations.csv
-
-# Streaming history (user imports these manually)
-data/streaming_history/*.json
-!data/streaming_history/README.md
 
 # Checkpoint files (for resuming interrupted syncs)
 data/.liked_sync_offset
