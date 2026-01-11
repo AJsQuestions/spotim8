@@ -7,7 +7,7 @@ Turn your Spotify library into tidy DataFrames, analyze your listening habits, a
 ## ✨ Features
 
 - 📊 **Pandas DataFrames** - Your library as tidy, mergeable tables
-- 📅 **5 Playlist Types** - Finds, Top, Vibes, OnRepeat, and Discovery playlists
+- 📅 **3 Core Playlist Types** - Finds (liked songs), Top (most played), and Discovery (new tracks)
 - 🎸 **Genre-Split Playlists** - Separate by HipHop, Dance, Other
 - 🎵 **Master Genre Playlists** - All-time playlists by genre
 - 📈 **Streaming History Integration** - Analyze actual listening patterns from Spotify exports
@@ -139,21 +139,27 @@ See [examples/01_quickstart.py](examples/01_quickstart.py) for a complete exampl
 | `01_sync_data.ipynb` | Download and cache your Spotify library + streaming history |
 | `02_analyze_library.ipynb` | Visualize your listening habits and library statistics |
 | `03_playlist_analysis.ipynb` | Genre analysis and playlist clustering |
-| `04_analyze_listening_history.ipynb` | **NEW in v2.0** - Analyze actual listening patterns from Spotify exports |
+| `04_analyze_listening_history.ipynb` | Analyze actual listening patterns from Spotify exports |
 | `05_liked_songs_monthly_playlists.ipynb` | **Create all automated playlists** |
 | `06_identify_redundant_playlists.ipynb` | Find and consolidate similar playlists |
-| `07_analyze_crashes.ipynb` | **NEW in v2.0** - Technical log analysis and crash detection |
+| `07_analyze_crashes.ipynb` | Technical log analysis and crash detection |
 
 ### Playlist Generation
 
 The sync script and notebook `05_liked_songs_monthly_playlists.ipynb` create automated playlists:
 
-**5 Playlist Types (v2.0):**
-- 📅 **Finds** - Liked songs: `{Owner}{Prefix}{Mon}{Year}` → e.g., `AJFindsDec25`
+**Playlist Types:**
+- 📅 **Finds** - Liked songs: `{Owner}{Prefix}{Mon}{Year}` → e.g., `AJFndsDec25`
+  - Monthly: `AJFndsDec25`, `AJFndsNov25`, etc.
+  - Yearly: `AJFnds24` (consolidated from older months)
 - 🎯 **Top** - Most played: `{Owner}Top{Mon}{Year}` → e.g., `AJTopDec25`
+  - Requires streaming history data
 - 🔍 **Discovery** - New tracks: `{Owner}Dscvr{Mon}{Year}` → e.g., `AJDscvrDec25`
+  - Requires streaming history data
 - 🎸 **Genre-Split Monthly** - `{Genre}{Prefix}{Mon}{Year}` → e.g., `HipHopFindsDec25`, `DanceFindsDec25`
+  - Automatically created for Finds playlists
 - 🎵 **Master Genre Playlists** - `{Owner}am{Genre}` → e.g., `AJamHip-Hop`, `AJamElectronic`
+  - All-time playlists by genre
 
 **Automatic Consolidation:**
 - Last 3 months kept as monthly playlists
@@ -261,6 +267,8 @@ Get email notifications after each sync run. Configure in your `.env` file:
 
 ## 🎛️ CLI
 
+The `spotim8` command-line interface provides quick access to common operations:
+
 ```bash
 # Sync library
 spotim8 refresh
@@ -275,6 +283,8 @@ spotim8 export --table tracks --out tracks.parquet
 spotim8 market --kind new_releases --country US --limit 50 --out releases.parquet
 ```
 
+For more advanced operations, use the Python API or scripts directly.
+
 ---
 
 ## 📂 Project Structure
@@ -282,24 +292,30 @@ spotim8 market --kind new_releases --country US --limit 50 --out releases.parque
 ```
 spotim8/
 ├── spotim8/                      # Core Python library
-│   ├── client.py                 # Main Spotim8 class
-│   ├── catalog.py                # Data caching layer
+│   ├── client.py                 # Main Spotim8 class (entry point)
+│   ├── catalog.py                # Data caching layer (parquet storage)
 │   ├── cli.py                    # Command line interface
-│   ├── features.py               # Feature engineering
-│   ├── genres.py                 # Genre classification
+│   ├── features.py               # Feature engineering utilities
+│   ├── genres.py                 # Genre classification rules
+│   ├── genre_inference.py        # Genre inference engine
 │   ├── analysis.py               # Library analysis utilities
+│   ├── streaming_history.py      # Streaming history integration (v2.0+)
 │   ├── market.py                 # Market data (browse/search)
 │   ├── export.py                 # Data export utilities
 │   ├── ratelimit.py              # Rate limiting utilities
 │   └── utils.py                  # Helper functions
+│
 ├── notebooks/                    # Jupyter notebooks for analysis
-│   ├── 01_sync_data.ipynb        # Sync library data
+│   ├── 01_sync_data.ipynb        # Sync library data & streaming history
 │   ├── 02_analyze_library.ipynb  # Visualize listening habits
 │   ├── 03_playlist_analysis.ipynb # Genre analysis & clustering
-│   ├── 04_analyze_listening_history.ipynb # Analyze listening patterns from exports
-│   ├── 05_liked_songs_monthly_playlists.ipynb # Create playlists
-│   └── 06_identify_redundant_playlists.ipynb # Find similar playlists
-├── scripts/                      # Scripts organized by category
+│   ├── 04_analyze_listening_history.ipynb # Analyze listening patterns
+│   ├── 05_liked_songs_monthly_playlists.ipynb # Create automated playlists
+│   ├── 06_identify_redundant_playlists.ipynb # Find similar playlists
+│   ├── 07_analyze_crashes.ipynb  # Technical log analysis
+│   └── notebook_helpers.py       # Shared notebook utilities
+│
+├── scripts/                      # Scripts organized by category (v3.0+)
 │   ├── automation/               # Automation and sync scripts
 │   │   ├── sync.py               # Main sync & playlist update script
 │   │   ├── runner.py             # Local sync runner wrapper
@@ -317,13 +333,39 @@ spotim8/
 │   │   └── playlist_helpers.py   # Shared playlist utilities
 │   └── utils/                    # Utility scripts
 │       ├── get_token.py          # Get refresh token for automation
-│       └── setup.py               # Initial setup helper
-├── examples/
+│       └── setup.py              # Initial setup helper
+│
+├── examples/                     # Example code
 │   └── 01_quickstart.py          # Quick start example
+│
 ├── tests/                        # Test suite
+│   ├── test_client.py            # Client tests
+│   └── test_import.py            # Import tests
+│
 ├── data/                         # Cached parquet files (gitignored)
-└── logs/                         # Log files (gitignored)
+│   ├── *.parquet                 # Library data cache
+│   └── Spotify Account Data/     # Spotify export data (gitignored)
+│
+├── logs/                         # Log files (gitignored)
+│   └── sync.log                  # Sync operation logs
+│
+├── README.md                     # This file - main documentation
+├── CONTRIBUTING.md               # Contribution guidelines
+├── CHANGELOG.md                  # Version history
+├── LICENSE                       # MIT License
+├── pyproject.toml                # Project configuration
+└── env.example                   # Environment variables template
 ```
+
+### Key Directories
+
+- **`spotim8/`**: Core library - main Python package
+- **`notebooks/`**: Analysis notebooks - run sequentially for full workflow
+- **`scripts/automation/`**: Sync and automation - daily cron jobs
+- **`scripts/playlist/`**: Playlist management - merge, delete, update playlists
+- **`scripts/utils/`**: Utilities - token setup, project setup
+- **`examples/`**: Code examples - quick start templates
+- **`tests/`**: Test suite - unit and integration tests
 
 ---
 
@@ -379,7 +421,14 @@ tail -f logs/sync.log
 
 Thank you for your interest in contributing to Spotim8!
 
-### Development Setup
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
+- Development setup
+- Code style and standards
+- Testing requirements
+- Pull request process
+- Documentation guidelines
+
+### Quick Start for Contributors
 
 ```bash
 # Install with dev dependencies
@@ -389,22 +438,11 @@ pip install -e ".[dev]"
 pytest tests/
 
 # Format code
-black spotim8/
-ruff check spotim8/
+black spotim8/ scripts/
+
+# Lint code
+ruff check spotim8/ scripts/
 ```
-
-### Code Style
-
-- **Python**: Follow PEP 8, use `black` for formatting, `ruff` for linting
-- **Commits**: Use clear, descriptive commit messages
-
-### Pull Request Process
-
-1. Create a feature branch from `main`
-2. Make your changes with clear commits
-3. Test your changes locally
-4. Update documentation if needed
-5. Submit a pull request with a clear description
 
 ---
 
