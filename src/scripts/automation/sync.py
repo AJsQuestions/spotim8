@@ -249,8 +249,10 @@ DISCOVERY_TEMPLATE = os.environ.get(
 )
 
 # Master genre playlist limits
-MIN_TRACKS_FOR_GENRE = 20
-MAX_GENRE_PLAYLISTS = 19
+# Note: These are also defined in config.py - prefer importing from there
+# Keeping here for backward compatibility during refactoring
+MIN_TRACKS_FOR_GENRE = 10  # Lowered from 20 to 10 for better genre diversity
+MAX_GENRE_PLAYLISTS = 25  # Increased from 19 to 25
 
 # Monthly playlist retention (how many recent months to keep as monthly playlists)
 KEEP_MONTHLY_MONTHS = int(os.environ.get("KEEP_MONTHLY_MONTHS", "3"))

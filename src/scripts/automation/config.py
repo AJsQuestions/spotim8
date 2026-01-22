@@ -113,8 +113,11 @@ DISCOVERY_TEMPLATE = parse_str_env(
 # PLAYLIST LIMITS AND RETENTION
 # ============================================================================
 
-MIN_TRACKS_FOR_GENRE = parse_int_env("MIN_TRACKS_FOR_GENRE", 20)
-MAX_GENRE_PLAYLISTS = parse_int_env("MAX_GENRE_PLAYLISTS", 19)
+# Genre playlist thresholds
+# MIN_TRACKS_FOR_GENRE: Minimum absolute number of tracks (adaptive threshold also used)
+# Lower this if you want more genre playlists with fewer tracks
+MIN_TRACKS_FOR_GENRE = parse_int_env("MIN_TRACKS_FOR_GENRE", 10)  # Lowered from 20 to 10
+MAX_GENRE_PLAYLISTS = parse_int_env("MAX_GENRE_PLAYLISTS", 25)  # Increased from 19 to 25
 KEEP_MONTHLY_MONTHS = parse_int_env("KEEP_MONTHLY_MONTHS", 3)
 
 # ============================================================================

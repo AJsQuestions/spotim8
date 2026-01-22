@@ -463,37 +463,50 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
         liked_uris = [f"spotify:track:{tid}" for tid in liked_ids]
     
     # Build genre mapping - tracks can have MULTIPLE broad genres
-    # Try to use stored track genres first, then fall back to artist genres
+    # Use comprehensive genre inference: stored genres -> artist genres -> playlist patterns -> heuristics
     uri_to_genres = {}  # Map URI to list of broad genres
     tracks_df = pd.read_parquet(DATA_DIR / "tracks.parquet")
+    playlists_df = pd.read_parquet(DATA_DIR / "playlists.parquet")
     
-    if "genres" in tracks_df.columns:
-        # Use stored track genres and convert to broad genres
-        for _, track_row in tracks_df.iterrows():
-            track_id = track_row["track_id"]
-            if track_id not in liked_ids:
-                continue
-            uri = f"spotify:track:{track_id}"
-            stored_genres = _parse_genres(track_row.get("genres"))
-            if stored_genres:
-                # Convert stored genres to broad genres
-                broad_genres = get_all_broad_genres(stored_genres)
-                if broad_genres:
-                    uri_to_genres[uri] = broad_genres
+    # Import comprehensive genre inference
+    from src.features.genre_inference import infer_genres_comprehensive
     
-    # Fill in missing using artist data
+    # Build artist genres map for fast lookup
     artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
+    
+    verbose_log(f"  Classifying genres for {len(liked_ids)} liked tracks...")
+    
+    # Use comprehensive genre inference for all tracks
     for track_id in liked_ids:
         uri = f"spotify:track:{track_id}"
-        if uri in uri_to_genres:
-            continue  # Already have from stored data
         
-        # Get all genres from all artists on this track
-        all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
-        # Get ALL matching broad genres (tracks can match multiple)
-        broad_genres = get_all_broad_genres(all_track_genres)
-        if broad_genres:
-            uri_to_genres[uri] = broad_genres
+        # Get track metadata
+        track_row = tracks_df[tracks_df["track_id"] == track_id]
+        track_name = track_row["name"].iloc[0] if not track_row.empty else None
+        album_name = track_row["album_name"].iloc[0] if not track_row.empty and "album_name" in track_row.columns else None
+        
+        # Use comprehensive genre inference (tries multiple methods)
+        inferred_genres = infer_genres_comprehensive(
+            track_id=track_id,
+            track_name=track_name,
+            album_name=album_name,
+            track_artists=track_artists,
+            artists=artists,
+            playlist_tracks=library,
+            playlists=playlists_df,
+            mode="broad"  # Use broad genres for master playlists
+        )
+        
+        if inferred_genres:
+            uri_to_genres[uri] = inferred_genres
+        else:
+            # Fallback: try direct artist genres if inference failed
+            all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
+            broad_genres = get_all_broad_genres(all_track_genres)
+            if broad_genres:
+                uri_to_genres[uri] = broad_genres
+    
+    verbose_log(f"  Classified genres for {len(uri_to_genres)}/{len(liked_ids)} tracks ({len(uri_to_genres)/len(liked_ids)*100:.1f}%)")
     
     # Count tracks per genre (tracks can contribute to multiple genres)
     genre_counts = Counter()
@@ -503,21 +516,49 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
     
     # Log genre distribution for debugging
     if verbose_log:
-        verbose_log(f"  Genre distribution: {dict(genre_counts.most_common(10))}")
+        verbose_log(f"  Genre distribution (top 15): {dict(genre_counts.most_common(15))}")
         verbose_log(f"  Total liked tracks: {len(liked_uris)}, tracks with genres: {len(uri_to_genres)}")
+        verbose_log(f"  Genre coverage: {len(uri_to_genres)/len(liked_uris)*100:.1f}% of tracks have genres")
+        
+        # Show breakdown by genre count
+        genre_size_distribution = Counter()
+        for genres_list in uri_to_genres.values():
+            genre_size_distribution[len(genres_list)] += 1
+        verbose_log(f"  Tracks by genre count: {dict(sorted(genre_size_distribution.items()))}")
     
-    # Select top genres
-    selected = [g for g, n in genre_counts.most_common(MAX_GENRE_PLAYLISTS) 
-                if n >= MIN_TRACKS_FOR_GENRE]
+    # Adaptive threshold: use percentage-based threshold if absolute threshold is too restrictive
+    total_tracks_with_genres = len(uri_to_genres)
+    if total_tracks_with_genres > 0:
+        # Use 1% of tracks as minimum, but not less than 10 tracks
+        adaptive_threshold = max(MIN_TRACKS_FOR_GENRE, int(total_tracks_with_genres * 0.01))
+        adaptive_threshold = min(adaptive_threshold, 50)  # Cap at 50 to avoid too many small playlists
+    else:
+        adaptive_threshold = MIN_TRACKS_FOR_GENRE
     
-    log(f"  Found {len(selected)} genre(s) with >= {MIN_TRACKS_FOR_GENRE} tracks")
+    # Select genres: use adaptive threshold, but also include top genres even if below threshold
+    # This ensures we capture diverse genres even if they're smaller
+    top_genres_all = genre_counts.most_common(MAX_GENRE_PLAYLISTS)
+    
+    # First, get all genres that meet the threshold
+    selected = [g for g, n in top_genres_all if n >= adaptive_threshold]
+    
+    # If we have very few genres, also include top genres even if below threshold (but at least 5 tracks)
+    if len(selected) < 3 and len(top_genres_all) > 0:
+        min_fallback = max(5, int(adaptive_threshold * 0.3))  # At least 30% of threshold, minimum 5
+        additional = [g for g, n in top_genres_all[:5] if n >= min_fallback and g not in selected]
+        selected.extend(additional)
+        verbose_log(f"  Added {len(additional)} genre(s) below threshold to ensure diversity (min {min_fallback} tracks)")
+    
+    log(f"  Found {len(selected)} genre(s) (threshold: {adaptive_threshold} tracks, {adaptive_threshold/total_tracks_with_genres*100:.1f}% of library)")
     if selected:
         for genre in selected:
             count = genre_counts[genre]
-            log(f"    • {genre}: {count} tracks")
+            pct = (count / total_tracks_with_genres * 100) if total_tracks_with_genres > 0 else 0
+            log(f"    • {genre}: {count} tracks ({pct:.1f}%)")
     else:
-        verbose_log(f"  No genres meet the minimum threshold of {MIN_TRACKS_FOR_GENRE} tracks")
-        verbose_log(f"  Top genres: {dict(genre_counts.most_common(5))}")
+        verbose_log(f"  No genres meet the minimum threshold of {adaptive_threshold} tracks")
+        verbose_log(f"  Top genres: {dict(genre_counts.most_common(10))}")
+        verbose_log(f"  Consider lowering MIN_TRACKS_FOR_GENRE or improving genre classification")
     
     # Get existing playlists (cached)
     existing = get_existing_playlists(sp)
