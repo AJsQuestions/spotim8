@@ -463,7 +463,8 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
         liked_uris = [f"spotify:track:{tid}" for tid in liked_ids]
     
     # Build genre mapping - tracks can have MULTIPLE broad genres
-    # Use ONLY artist genres (most reliable) - avoid playlist pattern inference which is too noisy
+    # Use ONLY artist genres (most reliable) - stored track genres are split genres, not useful for broad classification
+    # Playlist pattern inference is disabled because it's too noisy and causes false positives
     uri_to_genres = {}  # Map URI to list of broad genres
     tracks_df = pd.read_parquet(DATA_DIR / "tracks.parquet")
     
@@ -472,21 +473,61 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
     
     verbose_log(f"  Classifying genres for {len(liked_ids)} liked tracks using artist genres only...")
     
+    # Count tracks with artist genres for debugging
+    tracks_with_artist_genres = 0
+    tracks_with_broad_genres = 0
+    
     # Use ONLY artist genres (most reliable source)
-    # Playlist pattern inference is disabled because it's too noisy and causes false positives
+    # Note: Stored track genres are split genres (HipHop/Dance/Other), not artist genres
+    # We need actual artist genres from Spotify to map to broad genres correctly
     for track_id in liked_ids:
         uri = f"spotify:track:{track_id}"
         
         # Get all genres from all artists on this track
         all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
         
-        # Convert to broad genres - this is the ONLY source we trust
-        broad_genres = get_all_broad_genres(all_track_genres)
+        # Filter out inferred genres (capitalized like "Dance", "HipHop", "R&B/Soul")
+        # These are NOT actual Spotify artist genres - they're previously inferred genres
+        # Actual Spotify genres are lowercase and specific (e.g., "contemporary r&b", "trap", "house")
+        actual_spotify_genres = []
+        for genre in all_track_genres:
+            genre_str = str(genre).strip()
+            # Skip if it looks like an inferred genre (capitalized broad categories)
+            if genre_str in ['Dance', 'HipHop', 'Other', 'R&B/Soul', 'Hip-Hop', 'Electronic', 
+                           'Rock', 'Pop', 'Jazz', 'Classical', 'Country/Folk', 'Metal', 
+                           'Indie', 'Latin', 'World', 'Blues']:
+                continue  # Skip inferred genres
+            # Only use actual Spotify genres (lowercase, specific)
+            if genre_str and genre_str.lower() == genre_str:
+                actual_spotify_genres.append(genre_str)
+        
+        if actual_spotify_genres:
+            tracks_with_artist_genres += 1
+        
+        # Convert to broad genres using strict word boundary matching
+        # Only use actual Spotify artist genres, not inferred ones
+        broad_genres = get_all_broad_genres(actual_spotify_genres)
         
         if broad_genres:
             uri_to_genres[uri] = broad_genres
+            tracks_with_broad_genres += 1
+    
+    verbose_log(f"  Tracks with artist genres: {tracks_with_artist_genres}/{len(liked_ids)} ({tracks_with_artist_genres/len(liked_ids)*100:.1f}%)")
+    verbose_log(f"  Tracks with broad genres assigned: {tracks_with_broad_genres}/{len(liked_ids)} ({tracks_with_broad_genres/len(liked_ids)*100:.1f}%)")
     
     verbose_log(f"  Classified genres for {len(uri_to_genres)}/{len(liked_ids)} tracks ({len(uri_to_genres)/len(liked_ids)*100:.1f}%)")
+    
+    # Debug: Check a sample of tracks to see what genres they're getting
+    if verbose_log and len(uri_to_genres) > 0:
+        sample_tracks = list(uri_to_genres.items())[:10]
+        verbose_log(f"  Sample track genres (first 10):")
+        for uri, genres in sample_tracks:
+            track_id = uri.replace("spotify:track:", "")
+            track_row = tracks_df[tracks_df["track_id"] == track_id]
+            track_name = track_row["name"].iloc[0] if not track_row.empty else "Unknown"
+            # Get artist genres for this track
+            all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
+            verbose_log(f"    {track_name[:50]}: artist={all_track_genres[:5]}, broad={genres}")
     
     # Count tracks per genre (tracks can contribute to multiple genres)
     genre_counts = Counter()
