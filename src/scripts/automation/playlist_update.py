@@ -463,48 +463,28 @@ def update_master_genre_playlists(sp: spotipy.Spotify) -> None:
         liked_uris = [f"spotify:track:{tid}" for tid in liked_ids]
     
     # Build genre mapping - tracks can have MULTIPLE broad genres
-    # Use comprehensive genre inference: stored genres -> artist genres -> playlist patterns -> heuristics
+    # Use ONLY artist genres (most reliable) - avoid playlist pattern inference which is too noisy
     uri_to_genres = {}  # Map URI to list of broad genres
     tracks_df = pd.read_parquet(DATA_DIR / "tracks.parquet")
-    playlists_df = pd.read_parquet(DATA_DIR / "playlists.parquet")
-    
-    # Import comprehensive genre inference
-    from src.features.genre_inference import infer_genres_comprehensive
     
     # Build artist genres map for fast lookup
     artist_genres_map = artists.set_index("artist_id")["genres"].to_dict()
     
-    verbose_log(f"  Classifying genres for {len(liked_ids)} liked tracks...")
+    verbose_log(f"  Classifying genres for {len(liked_ids)} liked tracks using artist genres only...")
     
-    # Use comprehensive genre inference for all tracks
+    # Use ONLY artist genres (most reliable source)
+    # Playlist pattern inference is disabled because it's too noisy and causes false positives
     for track_id in liked_ids:
         uri = f"spotify:track:{track_id}"
         
-        # Get track metadata
-        track_row = tracks_df[tracks_df["track_id"] == track_id]
-        track_name = track_row["name"].iloc[0] if not track_row.empty else None
-        album_name = track_row["album_name"].iloc[0] if not track_row.empty and "album_name" in track_row.columns else None
+        # Get all genres from all artists on this track
+        all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
         
-        # Use comprehensive genre inference (tries multiple methods)
-        inferred_genres = infer_genres_comprehensive(
-            track_id=track_id,
-            track_name=track_name,
-            album_name=album_name,
-            track_artists=track_artists,
-            artists=artists,
-            playlist_tracks=library,
-            playlists=playlists_df,
-            mode="broad"  # Use broad genres for master playlists
-        )
+        # Convert to broad genres - this is the ONLY source we trust
+        broad_genres = get_all_broad_genres(all_track_genres)
         
-        if inferred_genres:
-            uri_to_genres[uri] = inferred_genres
-        else:
-            # Fallback: try direct artist genres if inference failed
-            all_track_genres = _get_all_track_genres(track_id, track_artists, artist_genres_map)
-            broad_genres = get_all_broad_genres(all_track_genres)
-            if broad_genres:
-                uri_to_genres[uri] = broad_genres
+        if broad_genres:
+            uri_to_genres[uri] = broad_genres
     
     verbose_log(f"  Classified genres for {len(uri_to_genres)}/{len(liked_ids)} tracks ({len(uri_to_genres)/len(liked_ids)*100:.1f}%)")
     
