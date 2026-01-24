@@ -346,7 +346,7 @@ def timed_step(step_name: str):
         log(f"⏱️  [END] {step_name} (took {elapsed:.2f}s)")
 
 
-def api_call(fn, *args, max_retries: int = 6, backoff_factor: float = 1.0, **kwargs):
+def api_call(fn: Callable, *args, max_retries: int = API_RATE_LIMIT_MAX_RETRIES, backoff_factor: float = 1.0, **kwargs) -> Any:
     """Call Spotify API method `fn` with retries and exponential backoff on rate limits or transient errors.
 
     `fn` should be a callable (typically a bound method on a `spotipy.Spotify` client).
